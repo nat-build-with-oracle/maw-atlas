@@ -34,7 +34,12 @@ const COMMANDS = `
   vesicle <bot> [n] [delay]   tmux pane transport
   add-guild <invite-or-id>    discover guild channels
   threads [--json]             list active threads across guilds
-  threads create <ch> <name>  create new thread in channel
+  threads create <ch> <name>  create empty thread
+  threads open <ch> <name>    create thread with starter msg + join
+  threads delete <name-or-id> delete thread
+  threads archive <name>      archive thread
+  threads join <name>         bot joins thread
+  threads add <thread> <uid>  add user to thread
   slash list [--json]          list registered slash commands
   slash register <name|--all>  register slash command
   slash remove <name-or-id>    remove slash command

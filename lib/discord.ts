@@ -84,6 +84,34 @@ export async function createThread(token: string, channelId: string, name: strin
   });
 }
 
+export async function createThreadFromMessage(token: string, channelId: string, messageId: string, name: string, autoArchiveDuration = 10080) {
+  return request(`/channels/${channelId}/messages/${messageId}/threads`, token, "POST", {
+    name, auto_archive_duration: autoArchiveDuration,
+  });
+}
+
+export async function deleteThread(token: string, threadId: string) {
+  return request(`/channels/${threadId}`, token, "DELETE");
+}
+
+export async function joinThread(token: string, threadId: string) {
+  const res = await fetch(`https://discord.com/api/v10/channels/${threadId}/thread-members/@me`, {
+    method: "PUT", headers: { Authorization: `Bot ${token}`, "User-Agent": "maw-atlas/1.0.0" },
+  });
+  return { ok: res.ok, status: res.status };
+}
+
+export async function addThreadMember(token: string, threadId: string, userId: string) {
+  const res = await fetch(`https://discord.com/api/v10/channels/${threadId}/thread-members/${userId}`, {
+    method: "PUT", headers: { Authorization: `Bot ${token}`, "User-Agent": "maw-atlas/1.0.0" },
+  });
+  return { ok: res.ok, status: res.status };
+}
+
+export async function archiveThread(token: string, threadId: string) {
+  return request(`/channels/${threadId}`, token, "PATCH", { archived: true });
+}
+
 // ── Slash Commands (Application Commands) ──
 
 export async function listSlashCommands(token: string, appId: string, guildId?: string) {
