@@ -114,6 +114,16 @@ export async function resolveInvite(token: string, code: string) {
   return request(`/invites/${clean}`, token);
 }
 
+// ── Application Settings ──
+
+export async function getApplication(token: string, appId: string) {
+  return request(`/applications/${appId}`, token);
+}
+
+export async function updateApplication(token: string, appId: string, data: any) {
+  return request(`/applications/${appId}`, token, "PATCH", data);
+}
+
 // ── Bot Avatar ──
 
 export async function setBotAvatar(token: string, avatarBase64: string) {

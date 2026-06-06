@@ -16,6 +16,7 @@ import { backfill } from "./commands/backfill";
 import { threads } from "./commands/threads";
 import { slash } from "./commands/slash";
 import { avatar } from "./commands/avatar";
+import { app } from "./commands/app";
 
 export const command = {
   name: "atlas",
@@ -38,6 +39,9 @@ const COMMANDS = `
   slash remove <name-or-id>    remove slash command
   avatar                       show current bot avatar
   avatar set <image-path>      set bot avatar (PNG/JPG/GIF/WebP)
+  app                          show app settings
+  app interactions <url>       set Interactions Endpoint URL
+  app interactions --clear     remove Interactions Endpoint URL
   inbox [--all] [--from=x]    read unread inbox messages
   whoami                      bot identity check
 `.trim();
@@ -105,6 +109,7 @@ export default async function handler(ctx: InvokeContext): Promise<InvokeResult>
       case "threads":   await threads(log, token!, args); break;
       case "slash":     await slash(log, token!, args); break;
       case "avatar":    await avatar(log, token!, args); break;
+      case "app":       await app(log, token!, args); break;
       default:
         log(`unknown: ${sub} — run 'maw atlas --help'`);
         return done(false);
