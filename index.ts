@@ -13,6 +13,7 @@ import { addGuild } from "./commands/add-guild";
 import { serve } from "./commands/serve";
 import { inbox } from "./commands/inbox";
 import { backfill } from "./commands/backfill";
+import { threads } from "./commands/threads";
 
 export const command = {
   name: "atlas",
@@ -28,6 +29,8 @@ const COMMANDS = `
   wake <bot> [host]           anchor-aware remote wake
   vesicle <bot> [n] [delay]   tmux pane transport
   add-guild <invite-or-id>    discover guild channels
+  threads [--json]             list active threads across guilds
+  threads create <ch> <name>  create new thread in channel
   inbox [--all] [--from=x]    read unread inbox messages
   whoami                      bot identity check
 `.trim();
@@ -40,6 +43,33 @@ export default async function handler(ctx: InvokeContext): Promise<InvokeResult>
 
   const args = ctx.source === "cli" ? (ctx.args as string[]) : [];
   const sub = args[0]?.toLowerCase();
+
+  if (sub === "--tree" || sub === "tree") {
+    log("maw atlas");
+    log("├── ls                          list guilds + channels");
+    log("├── read <channel>              read channel messages");
+    log("│   ├── --limit=N               message count (default 20)");
+    log("│   └── --plain                 human-readable (default JSON)");
+    log("├── threads                     list active threads (JSON)");
+    log("│   ├── create <ch> <name>      create new thread");
+    log("│   └── --plain                 human-readable");
+    log("├── backfill                    backfill all channels");
+    log("│   ├── --guild=<name>          specific guild");
+    log("│   └── --all                   all guilds");
+    log("├── serve                       start PARLIAMENT dashboard");
+    log("│   ├── --port=N                port (default 4567)");
+    log("│   └── --build                 auto-build UI first");
+    log("├── check                       consolidation invariant");
+    log("├── wake <bot> [host]           anchor-aware remote wake");
+    log("├── vesicle <bot> [n] [delay]   tmux pane transport");
+    log("├── add-guild <invite-or-id>    discover guild channels");
+    log("├── inbox                       read unread inbox messages");
+    log("│   ├── --all                   include read messages");
+    log("│   └── --from=<oracle>         filter by sender");
+    log("├── whoami                      bot identity check");
+    log("└── --tree                      this command tree");
+    return done(true);
+  }
 
   if (!sub || sub === "help" || sub === "-h" || sub === "--help") {
     log("maw atlas — Discord fleet infrastructure");
@@ -65,6 +95,7 @@ export default async function handler(ctx: InvokeContext): Promise<InvokeResult>
       case "read":      await read(log, token!, args); break;
       case "add-guild": await addGuild(log, token!, args); break;
       case "backfill":  await backfill(log, token!, args); break;
+      case "threads":   await threads(log, token!, args); break;
       default:
         log(`unknown: ${sub} — run 'maw atlas --help'`);
         return done(false);
