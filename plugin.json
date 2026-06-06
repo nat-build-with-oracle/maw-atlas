@@ -1,0 +1,17 @@
+{
+  "name": "atlas",
+  "version": "1.0.0",
+  "entry": "./index.ts",
+  "sdk": "^1.0.0",
+  "description": "Discord fleet infrastructure — manage bots, channels, guilds, permissions, backfill messages",
+  "author": "atlas-oracle",
+  "capabilities": ["fs:read", "fs:write"],
+  "cli": {
+    "command": "atlas",
+    "aliases": ["at"],
+    "help": "maw atlas <ls|read|backfill|check|wake|vesicle> — Discord fleet ops"
+  },
+  "weight": 50,
+  "license": "MIT",
+  "schemaVersion": 1
+}
