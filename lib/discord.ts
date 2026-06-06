@@ -114,6 +114,12 @@ export async function resolveInvite(token: string, code: string) {
   return request(`/invites/${clean}`, token);
 }
 
+// ── Bot Avatar ──
+
+export async function setBotAvatar(token: string, avatarBase64: string) {
+  return request("/users/@me", token, "PATCH", { avatar: avatarBase64 });
+}
+
 // ── Helpers ──
 
 export function filterTextChannels(channels: any[]): any[] {
