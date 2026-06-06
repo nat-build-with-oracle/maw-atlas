@@ -1,4 +1,4 @@
-import { getMe, listSlashCommands, registerSlashCommands, deleteSlashCommand } from "../lib/discord";
+import { getMe, listGuilds, listSlashCommands, registerSlashCommands, deleteSlashCommand } from "../lib/discord";
 
 const BUILTIN_COMMANDS: Record<string, any> = {
   thread: {
@@ -24,26 +24,46 @@ const BUILTIN_COMMANDS: Record<string, any> = {
   },
 };
 
+function parseGuild(args: string[]): string | undefined {
+  const g = args.find(a => a.startsWith("--guild="));
+  return g?.split("=")[1];
+}
+
 export async function slash(log: (s: string) => void, token: string, args: string[]) {
   const sub = args[1];
   const me = await getMe(token);
   const appId = me.id;
+  let guildId = parseGuild(args);
+
+  if (guildId === "all") {
+    const guilds = await listGuilds(token);
+    if (!Array.isArray(guilds)) { log("✗ could not list guilds"); return; }
+    for (const g of guilds) {
+      log(`\n${g.name} (${g.id}):`);
+      const subArgs = args.map(a => a === "--guild=all" ? `--guild=${g.id}` : a);
+      await slash(log, token, subArgs);
+    }
+    return;
+  }
 
   if (!sub || sub === "help") {
     log("usage:");
-    log("  maw atlas slash list                  list registered commands");
-    log("  maw atlas slash register <name>       register a slash command");
-    log("  maw atlas slash register --all        register all built-in commands");
-    log("  maw atlas slash remove <name-or-id>   remove a slash command");
+    log("  maw atlas slash list [--guild=ID]              list registered commands");
+    log("  maw atlas slash register <name> [--guild=ID]   register (guild = instant!)");
+    log("  maw atlas slash register --all [--guild=ID]    register all built-in");
+    log("  maw atlas slash remove <name-or-id> [--guild=ID]");
+    log("");
+    log("  --guild=ID    guild-specific (instant). Without = global (up to 1h delay)");
+    log("  --guild=all   apply to all guilds");
     log("");
     log("built-in commands: " + Object.keys(BUILTIN_COMMANDS).join(", "));
     return;
   }
 
   if (sub === "list") {
-    const cmds = await listSlashCommands(token, appId);
+    const cmds = await listSlashCommands(token, appId, guildId);
     if (!Array.isArray(cmds) || cmds.length === 0) {
-      log("no slash commands registered");
+      log("no slash commands registered" + (guildId ? ` (guild ${guildId})` : " (global)"));
       return;
     }
     const json = args.includes("--json");
@@ -54,7 +74,7 @@ export async function slash(log: (s: string) => void, token: string, args: strin
         const opts = c.options?.map((o: any) => `<${o.name}>`).join(" ") || "";
         log(`  /${c.name} ${opts} — ${c.description} (${c.id})`);
       }
-      log(`\n${cmds.length} commands`);
+      log(`\n${cmds.length} commands` + (guildId ? ` (guild)` : ` (global)`));
     }
     return;
   }
@@ -63,44 +83,44 @@ export async function slash(log: (s: string) => void, token: string, args: strin
     const name = args[2];
     if (name === "--all") {
       const all = Object.values(BUILTIN_COMMANDS);
-      const result = await registerSlashCommands(token, appId, all);
-      log(`✓ registered ${Array.isArray(result) ? result.length : 0} commands`);
+      const result = await registerSlashCommands(token, appId, all, guildId);
+      log(`✓ registered ${Array.isArray(result) ? result.length : 0} commands` + (guildId ? " (guild — instant!)" : " (global — up to 1h)"));
       if (Array.isArray(result)) {
         for (const c of result) log(`  /${c.name} (${c.id})`);
       }
       return;
     }
-    if (!name) { log("usage: maw atlas slash register <name|--all>"); return; }
+    if (!name || name.startsWith("--")) { log("usage: maw atlas slash register <name|--all> [--guild=ID]"); return; }
     const cmd = BUILTIN_COMMANDS[name.replace(/^\//, "")];
     if (!cmd) {
       log(`✗ unknown command: ${name}`);
       log("available: " + Object.keys(BUILTIN_COMMANDS).join(", "));
       return;
     }
-    const existing = await listSlashCommands(token, appId);
+    const existing = await listSlashCommands(token, appId, guildId);
     const merged = Array.isArray(existing) ? existing.map((e: any) => {
       if (e.name === cmd.name) return cmd;
       return { name: e.name, description: e.description, type: e.type, options: e.options };
     }) : [];
     if (!merged.find((c: any) => c.name === cmd.name)) merged.push(cmd);
-    const result = await registerSlashCommands(token, appId, merged);
+    const result = await registerSlashCommands(token, appId, merged, guildId);
     const registered = Array.isArray(result) ? result.find((c: any) => c.name === cmd.name) : null;
     if (registered) {
-      log(`✓ /${registered.name} registered (${registered.id})`);
+      log(`✓ /${registered.name} registered (${registered.id})` + (guildId ? " — instant!" : " — up to 1h"));
     } else {
-      log(`✓ registered (${Array.isArray(result) ? result.length : 0} total commands)`);
+      log(`✓ registered (${Array.isArray(result) ? result.length : 0} total)`);
     }
     return;
   }
 
   if (sub === "remove") {
     const target = args[2];
-    if (!target) { log("usage: maw atlas slash remove <name-or-id>"); return; }
-    const cmds = await listSlashCommands(token, appId);
+    if (!target || target.startsWith("--")) { log("usage: maw atlas slash remove <name-or-id> [--guild=ID]"); return; }
+    const cmds = await listSlashCommands(token, appId, guildId);
     if (!Array.isArray(cmds)) { log("✗ could not list commands"); return; }
     const match = cmds.find((c: any) => c.name === target.replace(/^\//, "") || c.id === target);
     if (!match) { log(`✗ command not found: ${target}`); return; }
-    await deleteSlashCommand(token, appId, match.id);
+    await deleteSlashCommand(token, appId, match.id, guildId);
     log(`✓ /${match.name} removed (${match.id})`);
     return;
   }

@@ -86,16 +86,25 @@ export async function createThread(token: string, channelId: string, name: strin
 
 // ── Slash Commands (Application Commands) ──
 
-export async function listSlashCommands(token: string, appId: string) {
-  return request(`/applications/${appId}/commands`, token);
+export async function listSlashCommands(token: string, appId: string, guildId?: string) {
+  const path = guildId
+    ? `/applications/${appId}/guilds/${guildId}/commands`
+    : `/applications/${appId}/commands`;
+  return request(path, token);
 }
 
-export async function registerSlashCommands(token: string, appId: string, commands: any[]) {
-  return request(`/applications/${appId}/commands`, token, "PUT", commands);
+export async function registerSlashCommands(token: string, appId: string, commands: any[], guildId?: string) {
+  const path = guildId
+    ? `/applications/${appId}/guilds/${guildId}/commands`
+    : `/applications/${appId}/commands`;
+  return request(path, token, "PUT", commands);
 }
 
-export async function deleteSlashCommand(token: string, appId: string, commandId: string) {
-  return request(`/applications/${appId}/commands/${commandId}`, token, "DELETE");
+export async function deleteSlashCommand(token: string, appId: string, commandId: string, guildId?: string) {
+  const path = guildId
+    ? `/applications/${appId}/guilds/${guildId}/commands/${commandId}`
+    : `/applications/${appId}/commands/${commandId}`;
+  return request(path, token, "DELETE");
 }
 
 // ── Invites ──
