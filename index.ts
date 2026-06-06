@@ -12,6 +12,7 @@ import { read } from "./commands/read";
 import { addGuild } from "./commands/add-guild";
 import { serve } from "./commands/serve";
 import { inbox } from "./commands/inbox";
+import { backfill } from "./commands/backfill";
 
 export const command = {
   name: "atlas",
@@ -63,6 +64,7 @@ export default async function handler(ctx: InvokeContext): Promise<InvokeResult>
       case "ls":        await ls(log, token!); break;
       case "read":      await read(log, token!, args); break;
       case "add-guild": await addGuild(log, token!, args); break;
+      case "backfill":  await backfill(log, token!, args); break;
       default:
         log(`unknown: ${sub} — run 'maw atlas --help'`);
         return done(false);
