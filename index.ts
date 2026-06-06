@@ -60,7 +60,7 @@ export default async function handler(ctx: InvokeContext): Promise<InvokeResult>
     log("  ls                          list guilds + channels");
     log("  read <channel> [--limit=N]  read channel messages");
     log("  backfill [--guild=x] [--all] backfill all channels");
-    log("  serve [--port=N]            start PARLIAMENT dashboard (default :4567)");
+    log("  serve [--port=N] [--build]   start PARLIAMENT (auto-build UI if missing)");
     log("  check                       consolidation invariant");
     log("  wake <bot> [host]           anchor-aware remote wake");
     log("  vesicle <bot> [n] [delay]   tmux pane transport");
@@ -91,10 +91,27 @@ export default async function handler(ctx: InvokeContext): Promise<InvokeResult>
     if (!repo) { log("✗ atlas-oracle repo not found (need parliament/api/server.ts)"); return done(false); }
     const port = args.find((a: string) => a.startsWith("--port="))?.split("=")[1] || "4567";
     const password = process.env.DASHBOARD_PASSWORD || "catlab";
-    log(`starting PARLIAMENT on :${port} (${repo}/parliament/api/server.ts)`);
+    const autoBuild = args.includes("--build");
     const { execSync } = require("child_process");
+    const { existsSync } = require("fs");
+
+    // auto-build frontend if --build or dist/ missing
+    const distPath = `${repo}/parliament/app/dist/index.html`;
+    if (autoBuild || !existsSync(distPath)) {
+      log(`building PARLIAMENT UI (${repo}/parliament/app)...`);
+      try {
+        execSync(`cd ${repo}/parliament/app && bun run build`, { stdio: "inherit" });
+        log("✓ build complete");
+      } catch (e: any) {
+        log(`⚠ build failed: ${e.message || e} — serving API only`);
+      }
+    }
+
+    log(`starting PARLIAMENT on :${port}`);
+    log(`  API: ${repo}/parliament/api/server.ts`);
+    log(`  UI:  ${existsSync(distPath) ? "parliament/app/dist/ (built)" : "not built — API only"}`);
     try {
-      execSync(`DASHBOARD_PASSWORD=${password} bun ${repo}/parliament/api/server.ts`, {
+      execSync(`bun ${repo}/parliament/api/server.ts`, {
         stdio: "inherit",
         env: { ...process.env, DASHBOARD_PASSWORD: password },
       });
