@@ -17,6 +17,7 @@ import { threads } from "./commands/threads";
 import { slash } from "./commands/slash";
 import { avatar } from "./commands/avatar";
 import { app } from "./commands/app";
+import { teamThreads } from "./commands/team-threads";
 
 export const command = {
   name: "atlas",
@@ -42,6 +43,8 @@ const COMMANDS = `
   app                          show app settings
   app interactions <url>       set Interactions Endpoint URL
   app interactions --clear     remove Interactions Endpoint URL
+  team-threads sync [channel]  create threads for worktree agents
+  team-threads list [channel]  list agent threads
   inbox [--all] [--from=x]    read unread inbox messages
   whoami                      bot identity check
 `.trim();
@@ -110,6 +113,7 @@ export default async function handler(ctx: InvokeContext): Promise<InvokeResult>
       case "slash":     await slash(log, token!, args); break;
       case "avatar":    await avatar(log, token!, args); break;
       case "app":       await app(log, token!, args); break;
+      case "team-threads": await teamThreads(log, token!, args); break;
       default:
         log(`unknown: ${sub} — run 'maw atlas --help'`);
         return done(false);
