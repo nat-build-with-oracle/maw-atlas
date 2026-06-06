@@ -11,6 +11,7 @@ import { ls } from "./commands/ls";
 import { read } from "./commands/read";
 import { addGuild } from "./commands/add-guild";
 import { serve } from "./commands/serve";
+import { inbox } from "./commands/inbox";
 
 export const command = {
   name: "atlas",
@@ -26,6 +27,7 @@ const COMMANDS = `
   wake <bot> [host]           anchor-aware remote wake
   vesicle <bot> [n] [delay]   tmux pane transport
   add-guild <invite-or-id>    discover guild channels
+  inbox [--all] [--from=x]    read unread inbox messages
   whoami                      bot identity check
 `.trim();
 
@@ -45,11 +47,9 @@ export default async function handler(ctx: InvokeContext): Promise<InvokeResult>
     return done(true);
   }
 
-  // serve doesn't need token
-  if (sub === "serve") {
-    await serve(log, args);
-    return done(true);
-  }
+  // serve + inbox don't need token
+  if (sub === "serve") { await serve(log, args); return done(true); }
+  if (sub === "inbox") { await inbox(log, args); return done(true); }
 
   const token = getToken();
   if (!token && !["check", "wake", "vesicle"].includes(sub)) {
