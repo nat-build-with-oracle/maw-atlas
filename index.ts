@@ -60,11 +60,47 @@ export default async function handler(ctx: InvokeContext): Promise<InvokeResult>
     log("  ls                          list guilds + channels");
     log("  read <channel> [--limit=N]  read channel messages");
     log("  backfill [--guild=x] [--all] backfill all channels");
+    log("  serve [--port=N]            start PARLIAMENT dashboard (default :4567)");
     log("  check                       consolidation invariant");
     log("  wake <bot> [host]           anchor-aware remote wake");
     log("  vesicle <bot> [n] [delay]   tmux pane transport");
     log("  add-guild <invite-or-id>    add guild + all channels");
     log("  whoami                      bot identity check");
+    return done(true);
+  }
+
+  // find atlas-oracle repo (for serve/check/wake/vesicle)
+  function findAtlasRepo(): string | null {
+    const { execSync } = require("child_process");
+    try {
+      const ghqRoot = execSync("ghq root", { encoding: "utf8" }).trim();
+      const candidates = [
+        `${ghqRoot}/github.com/Soul-Brews-Studio/discord-oracle`,
+        `${ghqRoot}/github.com/Soul-Brews-Studio/atlas-oracle`,
+      ];
+      const { existsSync } = require("fs");
+      for (const p of candidates) {
+        if (existsSync(`${p}/parliament/api/server.ts`)) return p;
+      }
+    } catch {}
+    return null;
+  }
+
+  if (sub === "serve") {
+    const repo = findAtlasRepo();
+    if (!repo) { log("✗ atlas-oracle repo not found (need parliament/api/server.ts)"); return done(false); }
+    const port = args.find((a: string) => a.startsWith("--port="))?.split("=")[1] || "4567";
+    const password = process.env.DASHBOARD_PASSWORD || "catlab";
+    log(`starting PARLIAMENT on :${port} (${repo}/parliament/api/server.ts)`);
+    const { execSync } = require("child_process");
+    try {
+      execSync(`DASHBOARD_PASSWORD=${password} bun ${repo}/parliament/api/server.ts`, {
+        stdio: "inherit",
+        env: { ...process.env, DASHBOARD_PASSWORD: password },
+      });
+    } catch (e: any) {
+      log(`server exited: ${e.message || e}`);
+    }
     return done(true);
   }
 
