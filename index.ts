@@ -20,6 +20,7 @@ import { app } from "./commands/app";
 import { teamThreads } from "./commands/team-threads";
 import { spawnSession } from "./commands/spawn-session";
 import { route } from "./commands/route";
+import { watch } from "./commands/watch";
 
 export const command = {
   name: "atlas",
@@ -53,6 +54,7 @@ const COMMANDS = `
   team-threads sync [channel]  create threads for worktree agents
   team-threads list [channel]  list agent threads
   route [start|status|once]    bridge Discord threads to codex panes
+  watch <channel>              auto-spawn codex workers from new threads
   spawn-session <charter>      team up + threads sync + route start
   inbox [--all] [--from=x]    read unread inbox messages
   whoami                      bot identity check
@@ -87,6 +89,7 @@ export default async function handler(ctx: InvokeContext): Promise<InvokeResult>
     log("├── vesicle <bot> [n] [delay]   tmux pane transport");
     log("├── add-guild <invite-or-id>    discover guild channels");
     log("├── route                       bridge Discord threads to codex panes");
+    log("├── watch <channel>             auto-spawn codex workers from new threads");
     log("├── spawn-session <charter>     team up + threads sync + route start");
     log("├── inbox                       read unread inbox messages");
     log("│   ├── --all                   include read messages");
@@ -108,7 +111,7 @@ export default async function handler(ctx: InvokeContext): Promise<InvokeResult>
   if (sub === "inbox") { await inbox(log, args); return done(true); }
 
   const token = getToken();
-  if (!token && !["check", "wake", "vesicle", "route", "spawn-session"].includes(sub)) {
+  if (!token && !["check", "wake", "vesicle", "route", "watch", "spawn-session"].includes(sub)) {
     log("✗ no DISCORD_BOT_TOKEN — set env or `pass insert discord/atlas-oracle-token`");
     return done(false);
   }
@@ -126,6 +129,7 @@ export default async function handler(ctx: InvokeContext): Promise<InvokeResult>
       case "app":       await app(log, token!, args); break;
       case "team-threads": await teamThreads(log, token!, args); break;
       case "route":     await route(log, token || "", args); break;
+      case "watch":     await watch(log, token || "", args); break;
       case "spawn-session": await spawnSession(log, args); break;
       default:
         log(`unknown: ${sub} — run 'maw atlas --help'`);
