@@ -14,6 +14,7 @@ import { serve } from "./commands/serve";
 import { inbox } from "./commands/inbox";
 import { backfill } from "./commands/backfill";
 import { threads } from "./commands/threads";
+import { slash } from "./commands/slash";
 
 export const command = {
   name: "atlas",
@@ -31,6 +32,9 @@ const COMMANDS = `
   add-guild <invite-or-id>    discover guild channels
   threads [--json]             list active threads across guilds
   threads create <ch> <name>  create new thread in channel
+  slash list [--json]          list registered slash commands
+  slash register <name|--all>  register slash command
+  slash remove <name-or-id>    remove slash command
   inbox [--all] [--from=x]    read unread inbox messages
   whoami                      bot identity check
 `.trim();
@@ -96,6 +100,7 @@ export default async function handler(ctx: InvokeContext): Promise<InvokeResult>
       case "add-guild": await addGuild(log, token!, args); break;
       case "backfill":  await backfill(log, token!, args); break;
       case "threads":   await threads(log, token!, args); break;
+      case "slash":     await slash(log, token!, args); break;
       default:
         log(`unknown: ${sub} — run 'maw atlas --help'`);
         return done(false);

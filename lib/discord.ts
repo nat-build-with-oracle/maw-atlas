@@ -84,6 +84,20 @@ export async function createThread(token: string, channelId: string, name: strin
   });
 }
 
+// ── Slash Commands (Application Commands) ──
+
+export async function listSlashCommands(token: string, appId: string) {
+  return request(`/applications/${appId}/commands`, token);
+}
+
+export async function registerSlashCommands(token: string, appId: string, commands: any[]) {
+  return request(`/applications/${appId}/commands`, token, "PUT", commands);
+}
+
+export async function deleteSlashCommand(token: string, appId: string, commandId: string) {
+  return request(`/applications/${appId}/commands/${commandId}`, token, "DELETE");
+}
+
 // ── Invites ──
 
 export async function resolveInvite(token: string, code: string) {
