@@ -21,6 +21,7 @@ import { teamThreads } from "./commands/team-threads";
 import { spawnSession } from "./commands/spawn-session";
 import { route } from "./commands/route";
 import { watch } from "./commands/watch";
+import { transcribe } from "./commands/transcribe";
 
 export const command = {
   name: "atlas",
@@ -32,6 +33,8 @@ const COMMANDS = `
   read <channel> [--limit=N]  read channel messages
   backfill [--guild=x] [--all] backfill all channels
   serve [--port=N] [--build]  start PARLIAMENT (auto-build UI)
+  transcribe <audio> [-o OUT] audio → timestamped transcript (Typhoon/Groq STT)
+  transcribe --compare A B    side-by-side STT engine diff
   check                       consolidation invariant
   wake <bot> [host]           anchor-aware remote wake
   vesicle <bot> [n] [delay]   tmux pane transport
@@ -106,9 +109,10 @@ export default async function handler(ctx: InvokeContext): Promise<InvokeResult>
     return done(true);
   }
 
-  // serve + inbox don't need token
+  // serve + inbox + transcribe don't need token
   if (sub === "serve") { await serve(log, args); return done(true); }
   if (sub === "inbox") { await inbox(log, args); return done(true); }
+  if (sub === "transcribe") { await transcribe(log, args); return done(true); }
 
   const token = getToken();
   if (!token && !["check", "wake", "vesicle", "route", "watch", "spawn-session"].includes(sub)) {
