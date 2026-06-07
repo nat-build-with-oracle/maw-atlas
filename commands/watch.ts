@@ -35,8 +35,8 @@ type WatchGuards = typeof watchGuards;
 
 const DEFAULT_INTERVAL_MS = 10_000;
 const DEFAULT_CONFIRM_TIMEOUT_MS = 10 * 60_000;
-const DEFAULT_ROUTING_TABLE = "/opt/Code/github.com/Soul-Brews-Studio/discord-oracle/.discord/thread-routing.json";
-const DEFAULT_ACCESS_FILE = "/opt/Code/github.com/Soul-Brews-Studio/discord-oracle/.discord/access.json";
+const DEFAULT_ROUTING_TABLE = "/opt/Code/github.com/Soul-Brews-Studio/atlas-oracle/.discord/thread-routing.json";
+const DEFAULT_ACCESS_FILE = "/opt/Code/github.com/Soul-Brews-Studio/atlas-oracle/.discord/access.json";
 const DEFAULT_STATE_FILE = ".maw/atlas-watch/state.json";
 const DEFAULT_NOTIFY_TARGET = "01-atlas:1";
 
@@ -74,7 +74,7 @@ function writeJson(file: string, value: any) {
 }
 
 function atlasRepo(): string | null {
-  return findAtlasRepo() || (existsSync(DEFAULT_ROUTING_TABLE) ? "/opt/Code/github.com/Soul-Brews-Studio/discord-oracle" : null);
+  return findAtlasRepo() || (existsSync(DEFAULT_ROUTING_TABLE) ? "/opt/Code/github.com/Soul-Brews-Studio/atlas-oracle" : null);
 }
 
 function routingPath(args: string[]): string {

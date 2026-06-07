@@ -8,7 +8,7 @@ export function findAtlasRepo(): string | null {
   try {
     const ghqRoot = execSync("ghq root", { encoding: "utf8" }).trim();
     const candidates = [
-      `${ghqRoot}/github.com/Soul-Brews-Studio/discord-oracle`,
+      `${ghqRoot}/github.com/Soul-Brews-Studio/atlas-oracle`,
       `${ghqRoot}/github.com/Soul-Brews-Studio/atlas-oracle`,
     ];
     for (const p of candidates) {

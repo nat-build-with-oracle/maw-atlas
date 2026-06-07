@@ -41,7 +41,7 @@ export type ReverseBridgeResult = {
   posted: number;
 };
 
-const DEFAULT_ROUTING_TABLE = "/opt/Code/github.com/Soul-Brews-Studio/discord-oracle/.discord/thread-routing.json";
+const DEFAULT_ROUTING_TABLE = "/opt/Code/github.com/Soul-Brews-Studio/atlas-oracle/.discord/thread-routing.json";
 const DEFAULT_SNAPSHOT_FILE = ".maw/atlas-route/reverse-snapshots.json";
 const DISCORD_LIMIT = 2000;
 

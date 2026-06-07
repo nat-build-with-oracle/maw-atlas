@@ -49,7 +49,7 @@ type LastSeen = Record<string, string | undefined>;
 
 const API = "https://discord.com/api/v10";
 const UA = "maw-atlas/1.0.0";
-const DEFAULT_ATLAS_REPO = "/opt/Code/github.com/Soul-Brews-Studio/discord-oracle";
+const DEFAULT_ATLAS_REPO = "/opt/Code/github.com/Soul-Brews-Studio/atlas-oracle";
 const DEFAULT_ROUTING_TABLE = `${DEFAULT_ATLAS_REPO}/.discord/thread-routing.json`;
 const DEFAULT_TEAMS_DIR = `${DEFAULT_ATLAS_REPO}/.maw/teams`;
 const DEFAULT_CONFIG = ".discord/thread-routing.json";
