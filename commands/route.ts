@@ -250,11 +250,24 @@ function toRow(msg: DiscordMessage, channelId: string): DiscordMsgRow {
   };
 }
 
+// Neutralize terminal-escape injection from Discord content before `maw hey`:
+// drop C0 control bytes (incl. ESC 0x1b) and DEL, keep \n (0x0a) and \t (0x09).
+// Removing the ESC byte makes any ANSI sequence inert (residual "[31m" is plain text).
+function stripControl(s: string): string {
+  let out = "";
+  for (const ch of s) {
+    const c = ch.codePointAt(0)!;
+    if ((c < 0x20 && c !== 0x0a && c !== 0x09) || c === 0x7f) continue;
+    out += ch;
+  }
+  return out;
+}
+
 function formatForwardMessage(route: RouteEntry, msg: DiscordMessage): string {
-  const author = msg.author?.global_name || msg.author?.username || "discord";
-  const content = (msg.content || "").trim();
+  const author = stripControl(msg.author?.global_name || msg.author?.username || "discord");
+  const content = stripControl((msg.content || "").trim());
   const attachments = (msg.attachments || [])
-    .map(a => a.url || a.filename)
+    .map(a => stripControl(a.url || a.filename || ""))
     .filter(Boolean)
     .join("\n");
   const body = [content, attachments].filter(Boolean).join("\n").trim() || "(no text content)";
