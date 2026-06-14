@@ -226,6 +226,14 @@ async function getThreadMessages(token: string, threadId: string, limit: number,
   return Array.isArray(data) ? data : [];
 }
 
+// backward pagination (older than `before`); Discord returns newest-first.
+async function getMessagesBefore(token: string, channelId: string, limit: number, before?: string): Promise<DiscordMessage[]> {
+  const params = new URLSearchParams({ limit: String(Math.min(Math.max(limit, 1), 100)) });
+  if (before) params.set("before", before);
+  const data = await discordGet(token, `/channels/${channelId}/messages?${params}`);
+  return Array.isArray(data) ? data : [];
+}
+
 async function getSelfBotId(token: string): Promise<string | undefined> {
   try {
     const me = await discordGet(token, "/users/@me");
@@ -381,6 +389,7 @@ function usage(log: Log) {
   log("  maw atlas route daemon|watch [--interval=5000]   run foreground polling loop");
   log("  maw atlas route oracles [--json]                 list all fleet oracles + maw-hey targets");
   log("  maw atlas route mentions <channelId> [--dry-run] @mention→open thread→maw hey oracle (Hermes)");
+  log("  maw atlas route backfill <channelId> [--max=N]   download FULL channel history → index to sqlite");
   log("");
   log("options:");
   log("  --config=path       routing table (default: .discord/thread-routing.json; --routing alias supported)");
@@ -851,6 +860,49 @@ export async function routeMentions(log: Log, token: string, args: string[]) {
   log(`${opened} thread(s) ${dryRun ? "would be " : ""}opened+routed; ${gated} message(s) gated (author not in allowFrom); ${ordered.length} polled`);
 }
 
+// route backfill <channelId> — download a channel's FULL history (backward via
+// before= cursor, 100/page) and index every message into the discord_messages
+// sqlite table. Idempotent (snowflake PK + INSERT OR IGNORE) so re-runs are safe.
+// Tracks <channelId>:oldest in last-seen.json so a re-run resumes older (no10 pattern).
+export async function routeBackfill(log: Log, token: string, args: string[]) {
+  const channelId = args[2];
+  if (!channelId || !/^\d{17,20}$/.test(channelId)) {
+    log("usage: maw atlas route backfill <channelId> [--max=N] [--fresh]");
+    return;
+  }
+  if (!token) { log("✗ no DISCORD_BOT_TOKEN — set env or `pass insert discord/atlas-oracle-token`"); return; }
+
+  const max = intArg(args, "--max", 1_000_000);
+  const fresh = args.includes("--fresh");
+  const stateFile = statePath(args);
+  const lastSeen = readLastSeen(stateFile);
+  const oldestKey = `${channelId}:oldest`;
+  const store = openMessageStore(dbPath(args));
+  const startCount = store.count();
+
+  let before = fresh ? undefined : lastSeen[oldestKey];
+  let fetched = 0;
+  log(`backfill ${channelId} → ${dbPath(args)}${before ? ` (resume older than ${before})` : ""}`);
+
+  while (fetched < max) {
+    const batch = await getMessagesBefore(token, channelId, 100, before);
+    if (!batch.length) break;
+    for (const m of batch) { if (m.id) store.insert(toRow(m, channelId)); }
+    fetched += batch.length;
+    before = batch[batch.length - 1].id; // oldest in this (newest-first) batch
+    lastSeen[oldestKey] = before;
+    writeLastSeen(stateFile, lastSeen);
+    log(`  ... ${fetched} fetched (oldest ${snowflakeToIso(before)})`);
+    if (batch.length < 100) break;
+    await sleep(400); // gentle on the rate limit
+  }
+
+  const indexed = store.count() - startCount;
+  const total = store.count();
+  store.close();
+  log(`✓ backfill done: ${fetched} fetched, ${indexed} new rows indexed, ${total} total in archive`);
+}
+
 export async function routeOracles(log: Log, args: string[]) {
   const repo = findAtlasRepo() || DEFAULT_ATLAS_REPO;
   const sdPath = resolve(repo, "parliament/api/state-dirs.ts");
@@ -893,6 +945,7 @@ export async function route(log: Log, token: string, args: string[]) {
 
   if (sub === "oracles") { await routeOracles(log, args); return; }
   if (sub === "mentions") { await routeMentions(log, token, args); return; }
+  if (sub === "backfill") { await routeBackfill(log, token, args); return; }
   if (sub === "start") { await startRouteDaemon(log, args); return; }
   if (sub === "stop") { await stopRouteDaemon(log, args); return; }
   if (sub === "status") { await routeStatus(log, args); return; }
