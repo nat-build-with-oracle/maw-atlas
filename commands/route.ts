@@ -15,6 +15,7 @@ import { dirname, join, resolve } from "path";
 import { execFile, spawn } from "child_process";
 import { findAtlasRepo } from "../lib/repo";
 import { openMessageStore, type MessageStore, type DiscordMsgRow } from "../lib/discord-db";
+import { createThreadFromMessage, joinThread, postMessage } from "../lib/discord";
 
 type Log = (s: string) => void;
 
@@ -379,6 +380,7 @@ function usage(log: Log) {
   log("  maw atlas route once [--dry-run] [--replay]      poll one time");
   log("  maw atlas route daemon|watch [--interval=5000]   run foreground polling loop");
   log("  maw atlas route oracles [--json]                 list all fleet oracles + maw-hey targets");
+  log("  maw atlas route mentions <channelId> [--dry-run] @mention→open thread→maw hey oracle (Hermes)");
   log("");
   log("options:");
   log("  --config=path       routing table (default: .discord/thread-routing.json; --routing alias supported)");
@@ -727,6 +729,128 @@ export async function routeDaemon(log: Log, token: string, args: string[] = []) 
   await runRoutePoller(log, token, args, "daemon");
 }
 
+// botId → { oracle name, maw-hey target } — join fleet-registry.json (botId) with
+// state-dirs ANCHORS (host) so an @mention can be resolved to an oracle + route target.
+async function loadOracleMentionMap(): Promise<Record<string, { name: string; mawHey: string }>> {
+  const repo = findAtlasRepo() || DEFAULT_ATLAS_REPO;
+  let anchors: Record<string, string> = {};
+  try { anchors = (await import(resolve(repo, "parliament/api/state-dirs.ts"))).ANCHORS || {}; } catch {}
+  let reg: any[] = [];
+  try { reg = JSON.parse(readFileSync(resolve(repo, "fleet-registry.json"), "utf8")); } catch {}
+  const map: Record<string, { name: string; mawHey: string }> = {};
+  for (const o of Array.isArray(reg) ? reg : []) {
+    const botId = o?.discord?.botId;
+    if (!botId) continue;
+    const host = anchors[o.name] || "m5";
+    const hostShort = String(host).split("@")[0].split(".")[0];
+    const short = String(o.name).replace(/-oracle$/, "");
+    map[String(botId)] = { name: o.name, mawHey: `${hostShort}:${short}` };
+  }
+  return map;
+}
+
+function writeRouteEntry(file: string, threadId: string, name: string, pane: string, agent: string) {
+  const table = readJson<Record<string, any>>(file, {});
+  table[threadId] = { name, pane, agent };
+  writeJson(file, table);
+}
+
+function accessPath(args: string[]): string {
+  const explicit = argValue(args, "--access") || process.env.ATLAS_ACCESS_JSON;
+  if (explicit) return resolve(explicit);
+  const repo = findAtlasRepo();
+  return repo ? resolve(repo, ".discord/access.json") : `${DEFAULT_ATLAS_REPO}/.discord/access.json`;
+}
+
+// Sender-ID gate (security rule: gate on author ID, not room): a thread is only
+// opened/routed if the message AUTHOR is in access.json allowFrom (global or the
+// channel's group). Prevents an arbitrary user from spawning threads / routing
+// into an oracle's session. To let oracles trigger each other, add their botIds.
+function authorAllowed(channelId: string, authorId: string | undefined, accessFile: string): boolean {
+  if (!authorId) return false;
+  const access = readJson<any>(accessFile, {});
+  const globalAllow = Array.isArray(access.allowFrom) ? access.allowFrom : [];
+  const groupAllow = Array.isArray(access.groups?.[channelId]?.allowFrom) ? access.groups[channelId].allowFrom : [];
+  return new Set([...globalAllow, ...groupAllow].map(String)).has(String(authorId));
+}
+
+// route mentions <channelId> — poll a channel; for each message that @mentions an
+// oracle, open a thread from it, join, register thread→oracle routing (so the thread
+// converses WITHOUT re-tagging), and maw hey the oracle with the original ask.
+export async function routeMentions(log: Log, token: string, args: string[]) {
+  const channelId = args[2];
+  if (!channelId || !/^\d{17,20}$/.test(channelId)) {
+    log("usage: maw atlas route mentions <channelId> [--dry-run] [--limit=N]");
+    return;
+  }
+  if (!token) { log("✗ no DISCORD_BOT_TOKEN — set env or `pass insert discord/atlas-oracle-token`"); return; }
+
+  const dryRun = args.includes("--dry-run");
+  const limit = intArg(args, "--limit", 20);
+  const stateFile = statePath(args);
+  const lastSeen = readLastSeen(stateFile);
+  const routingFile = routingPathForWrite(args);
+  const selfBotId = await getSelfBotId(token);
+  const oracleMap = await loadOracleMentionMap();
+  const accessFile = accessPath(args);
+  const store = openMessageStore(dbPath(args));
+
+  const messages = await getThreadMessages(token, channelId, limit, lastSeen[channelId]);
+  const ordered = messages.slice().sort((a, b) => snowflakeCompare(a.id, b.id));
+  let opened = 0;
+  let gated = 0;
+
+  for (const msg of ordered) {
+    if (!msg.id) continue;
+    store.insert(toRow(msg, channelId));
+
+    // sender-ID gate: only allowlisted authors may open/route (privilege-escalation guard)
+    if (!authorAllowed(channelId, msg.author?.id, accessFile)) {
+      gated++;
+      if (!dryRun) lastSeen[channelId] = msg.id;
+      continue;
+    }
+
+    const content = msg.content || "";
+    const mentioned = [...content.matchAll(/<@!?(\d+)>/g)].map(m => m[1]);
+    const targets = mentioned.filter(id => id !== selfBotId && oracleMap[id]);
+
+    try {
+      for (const botId of targets) {
+        const oracle = oracleMap[botId];
+        const author = stripControl(msg.author?.global_name || msg.author?.username || "discord");
+        const snippet = stripControl(content.replace(/<@!?\d+>/g, "").trim()).slice(0, 30) || "thread";
+        const threadName = `${oracle.name.replace(/-oracle$/, "")}-${snippet}`.slice(0, 60);
+
+        if (dryRun) {
+          log(`dry-run: would open thread "${threadName}" on ${msg.id} → route to ${oracle.mawHey}`);
+          opened++;
+          continue;
+        }
+
+        const thread = await createThreadFromMessage(token, channelId, msg.id, threadName);
+        if (!thread?.id) { log(`✗ thread create failed for ${msg.id}`); continue; }
+        await joinThread(token, thread.id);
+        writeRouteEntry(routingFile, thread.id, threadName, oracle.mawHey, oracle.name);
+        await mawHey(oracle.mawHey, `[#${threadName} · ${author}] ${stripControl(content)}`, false);
+        await postMessage(token, thread.id, `🧵 routed to ${oracle.name} — continue here, no need to @mention.`);
+        store.markRouted(msg.id, oracle.mawHey, new Date().toISOString());
+        opened++;
+        log(`opened+routed: ${threadName} (${thread.id}) → ${oracle.mawHey}`);
+      }
+    } catch (e) {
+      log(`mention route error — cursor held at ${lastSeen[channelId] ?? "start"}: ${e instanceof Error ? e.message : String(e)}`);
+      break;
+    }
+
+    if (!dryRun) lastSeen[channelId] = msg.id;
+  }
+
+  if (!dryRun) writeLastSeen(stateFile, lastSeen);
+  store.close();
+  log(`${opened} thread(s) ${dryRun ? "would be " : ""}opened+routed; ${gated} message(s) gated (author not in allowFrom); ${ordered.length} polled`);
+}
+
 export async function routeOracles(log: Log, args: string[]) {
   const repo = findAtlasRepo() || DEFAULT_ATLAS_REPO;
   const sdPath = resolve(repo, "parliament/api/state-dirs.ts");
@@ -768,6 +892,7 @@ export async function route(log: Log, token: string, args: string[]) {
   }
 
   if (sub === "oracles") { await routeOracles(log, args); return; }
+  if (sub === "mentions") { await routeMentions(log, token, args); return; }
   if (sub === "start") { await startRouteDaemon(log, args); return; }
   if (sub === "stop") { await stopRouteDaemon(log, args); return; }
   if (sub === "status") { await routeStatus(log, args); return; }
