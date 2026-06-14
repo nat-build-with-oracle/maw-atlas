@@ -14,6 +14,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSyn
 import { dirname, join, resolve } from "path";
 import { execFile, spawn } from "child_process";
 import { findAtlasRepo } from "../lib/repo";
+import { openMessageStore, type MessageStore, type DiscordMsgRow } from "../lib/discord-db";
 
 type Log = (s: string) => void;
 
@@ -46,6 +47,14 @@ type ThreadInfo = {
 };
 
 type LastSeen = Record<string, string | undefined>;
+
+type PollOpts = {
+  limit: number;
+  includeBots: boolean;
+  dryRun: boolean;
+  selfBotId?: string;
+  store?: MessageStore;
+};
 
 const API = "https://discord.com/api/v10";
 const UA = "maw-atlas/1.0.0";
@@ -115,6 +124,10 @@ function routingPathForWrite(args: string[]): string {
 
 function statePath(args: string[]): string {
   return resolve(argValue(args, "--state") || process.env.ATLAS_ROUTE_STATE || DEFAULT_STATE_FILE);
+}
+
+function dbPath(args: string[]): string {
+  return resolve(argValue(args, "--db") || process.env.ATLAS_ROUTE_DB || join(dirname(statePath(args)), "messages.sqlite"));
 }
 
 function pidPath(args: string[]): string {
@@ -212,6 +225,31 @@ async function getThreadMessages(token: string, threadId: string, limit: number,
   return Array.isArray(data) ? data : [];
 }
 
+async function getSelfBotId(token: string): Promise<string | undefined> {
+  try {
+    const me = await discordGet(token, "/users/@me");
+    return me?.id ? String(me.id) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function toRow(msg: DiscordMessage, channelId: string): DiscordMsgRow {
+  return {
+    message_id: msg.id,
+    channel_id: channelId,
+    thread_id: channelId,
+    guild_id: null,
+    author_id: msg.author?.id || "",
+    author_name: msg.author?.global_name || msg.author?.username || null,
+    author_is_bot: msg.author?.bot ? 1 : 0,
+    content: msg.content ?? null,
+    attachments_json: msg.attachments?.length ? JSON.stringify(msg.attachments) : null,
+    ts: snowflakeToIso(msg.id),
+    created_at: new Date().toISOString(),
+  };
+}
+
 function formatForwardMessage(route: RouteEntry, msg: DiscordMessage): string {
   const author = msg.author?.global_name || msg.author?.username || "discord";
   const content = (msg.content || "").trim();
@@ -267,7 +305,7 @@ async function pollOnce(
   token: string,
   table: RoutingTable,
   lastSeen: LastSeen,
-  opts: { limit: number; includeBots: boolean; dryRun: boolean },
+  opts: PollOpts,
 ): Promise<number> {
   let forwarded = 0;
 
@@ -277,16 +315,33 @@ async function pollOnce(
 
     for (const msg of ordered) {
       if (!msg.id) continue;
-      lastSeen[threadId] = msg.id;
+
+      // load EVERY polled message into the DB (idempotent), even bot/empty ones
+      opts.store?.insert(toRow(msg, threadId));
 
       const hasContent = !!(msg.content || "").trim();
       const hasAttachments = (msg.attachments || []).length > 0;
-      if (!hasContent && !hasAttachments) continue;
-      if (!opts.includeBots && msg.author?.bot) continue;
+      const empty = !hasContent && !hasAttachments;
+      const isSelf = !!opts.selfBotId && msg.author?.id === opts.selfBotId;
+      // echo guard: always skip our OWN posts; route sibling-bot posts (oracles see each other)
+      const skipRoute = empty || (isSelf && !opts.includeBots);
 
-      await mawHey(route.pane, formatForwardMessage(route, msg), opts.dryRun);
-      forwarded++;
-      log(`${opts.dryRun ? "dry-run" : "forwarded"}: ${route.name || threadId} → ${route.pane} (${msg.id})`);
+      if (!skipRoute) {
+        try {
+          await mawHey(route.pane, formatForwardMessage(route, msg), opts.dryRun);
+          forwarded++;
+          log(`${opts.dryRun ? "dry-run" : "forwarded"}: ${route.name || threadId} → ${route.pane} (${msg.id})`);
+        } catch (e) {
+          // at-least-once: hold the cursor at the last confirmed id; next poll re-routes
+          // (INSERT OR IGNORE keeps the DB from double-storing on the re-fetch)
+          log(`route error — cursor held at ${lastSeen[threadId] ?? "start"} for ${route.name || threadId}: ${e instanceof Error ? e.message : String(e)}`);
+          break;
+        }
+      }
+
+      // advance the cursor ONLY after the message is handled (routed or intentionally skipped),
+      // and NEVER in dry-run (dry-run must be side-effect-free)
+      if (!opts.dryRun) lastSeen[threadId] = msg.id;
     }
   }
 
@@ -310,6 +365,7 @@ function usage(log: Log) {
   log("  maw atlas route sync [--teams-dir=path]          rebuild routing table from .maw/teams/*.yaml + threads list");
   log("  maw atlas route once [--dry-run] [--replay]      poll one time");
   log("  maw atlas route daemon|watch [--interval=5000]   run foreground polling loop");
+  log("  maw atlas route oracles [--json]                 list all fleet oracles + maw-hey targets");
   log("");
   log("options:");
   log("  --config=path       routing table (default: .discord/thread-routing.json; --routing alias supported)");
@@ -594,32 +650,43 @@ async function runRoutePoller(log: Log, token: string, args: string[], sub: stri
 
   const stateFile = statePath(args);
   const lastSeen = readLastSeen(stateFile);
-  const opts = {
+  const opts: PollOpts = {
     limit: intArg(args, "--limit", 20),
     includeBots: args.includes("--include-bots"),
     dryRun: args.includes("--dry-run"),
   };
   const replay = args.includes("--replay");
 
+  // echo guard: resolve our own bot id once (skip our posts, route siblings)
+  opts.selfBotId = await getSelfBotId(token);
+  // message archive: open the dedicated discord_messages store (idempotent)
+  const store = openMessageStore(dbPath(args));
+  opts.store = store;
+
   await seedLatest(token, table, lastSeen, replay);
-  writeLastSeen(stateFile, lastSeen);
+  if (!opts.dryRun) writeLastSeen(stateFile, lastSeen);   // dry-run must NOT persist the seed cursor
   writeRuntimeStatus(args, {
     pid: process.pid,
     routing: file,
+    selfBotId: opts.selfBotId || null,
+    db: dbPath(args),
     lastPollAt: new Date().toISOString(),
     lastMessages: lastMessagesFromSeen(table, lastSeen),
   });
-  log(`route ${sub} ${opts.dryRun ? "(dry-run) " : ""}watching ${routes.length} thread(s); state=${stateFile}`);
+  log(`route ${sub} ${opts.dryRun ? "(dry-run) " : ""}watching ${routes.length} thread(s); state=${stateFile}; db=${dbPath(args)}; self=${opts.selfBotId || "?"}`);
 
   if (sub === "once") {
     const count = await pollOnce(log, token, table, lastSeen, opts);
-    writeLastSeen(stateFile, lastSeen);
+    if (!opts.dryRun) writeLastSeen(stateFile, lastSeen);
+    const stored = store.count();
     writeRuntimeStatus(args, {
       lastPollAt: new Date().toISOString(),
       lastForwardCount: count,
+      messageCount: stored,
       lastMessages: lastMessagesFromSeen(table, lastSeen),
     });
-    log(`${count} message(s) forwarded`);
+    store.close();
+    log(`${count} message(s) forwarded; ${stored} message(s) in archive (${dbPath(args)})`);
     return;
   }
 
@@ -627,11 +694,12 @@ async function runRoutePoller(log: Log, token: string, args: string[], sub: stri
   while (true) {
     try {
       const count = await pollOnce(log, token, table, lastSeen, opts);
-      writeLastSeen(stateFile, lastSeen);
+      if (!opts.dryRun) writeLastSeen(stateFile, lastSeen);
       writeRuntimeStatus(args, {
         pid: process.pid,
         lastPollAt: new Date().toISOString(),
         lastForwardCount: count,
+        messageCount: store.count(),
         lastMessages: lastMessagesFromSeen(table, lastSeen),
       });
     } catch (e) {
@@ -646,6 +714,39 @@ export async function routeDaemon(log: Log, token: string, args: string[] = []) 
   await runRoutePoller(log, token, args, "daemon");
 }
 
+export async function routeOracles(log: Log, args: string[]) {
+  const repo = findAtlasRepo() || DEFAULT_ATLAS_REPO;
+  const sdPath = resolve(repo, "parliament/api/state-dirs.ts");
+  let stateDirs: Record<string, string> = {};
+  let anchors: Record<string, string> = {};
+  try {
+    const mod = await import(sdPath);
+    stateDirs = mod.STATE_DIRS || {};
+    anchors = mod.ANCHORS || {};
+  } catch (e) {
+    log(`✗ could not load oracle list from ${sdPath}: ${e instanceof Error ? e.message : String(e)}`);
+    return;
+  }
+
+  const rows = Object.keys(stateDirs).sort().map(name => {
+    const host = anchors[name] || "m5";
+    const hostShort = host.split("@")[0].split(".")[0];
+    const short = name.replace(/-oracle$/, "");
+    return { name, host, stateDir: stateDirs[name], mawHey: `${hostShort}:${short}` };
+  });
+
+  if (args.includes("--json")) {
+    log(JSON.stringify(rows, null, 2));
+    return;
+  }
+
+  log(`oracles (${rows.length}):`);
+  for (const r of rows) {
+    log(`  ${r.name.padEnd(24)} host=${r.host.padEnd(16)} maw-hey=${r.mawHey}`);
+  }
+  log(`${rows.length} oracle(s) — source: ${sdPath}`);
+}
+
 export async function route(log: Log, token: string, args: string[]) {
   const sub = args[1]?.toLowerCase();
   if (!sub || sub === "help" || sub === "-h" || sub === "--help") {
@@ -653,6 +754,7 @@ export async function route(log: Log, token: string, args: string[]) {
     return;
   }
 
+  if (sub === "oracles") { await routeOracles(log, args); return; }
   if (sub === "start") { await startRouteDaemon(log, args); return; }
   if (sub === "stop") { await stopRouteDaemon(log, args); return; }
   if (sub === "status") { await routeStatus(log, args); return; }
