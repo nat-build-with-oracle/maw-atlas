@@ -15,7 +15,7 @@ import { dirname, join, resolve } from "path";
 import { execFile, spawn } from "child_process";
 import { findAtlasRepo } from "../lib/repo";
 import { openMessageStore, type MessageStore, type DiscordMsgRow } from "../lib/discord-db";
-import { createThreadFromMessage, joinThread, postMessage } from "../lib/discord";
+import { createThreadFromMessage, joinThread, postMessage, listGuilds, getGuildChannels, filterTextChannels } from "../lib/discord";
 
 type Log = (s: string) => void;
 
@@ -389,7 +389,7 @@ function usage(log: Log) {
   log("  maw atlas route daemon|watch [--interval=5000]   run foreground polling loop");
   log("  maw atlas route oracles [--json]                 list all fleet oracles + maw-hey targets");
   log("  maw atlas route mentions <channelId> [--dry-run] @mention→open thread→maw hey oracle (Hermes)");
-  log("  maw atlas route backfill <channelId> [--max=N]   download FULL channel history → index to sqlite");
+  log("  maw atlas route backfill <channelId>|all         download history → index to sqlite (ATLAS_BACKFILL_MAX caps/chan)");
   log("");
   log("options:");
   log("  --config=path       routing table (default: .discord/thread-routing.json; --routing alias supported)");
@@ -864,26 +864,13 @@ export async function routeMentions(log: Log, token: string, args: string[]) {
 // before= cursor, 100/page) and index every message into the discord_messages
 // sqlite table. Idempotent (snowflake PK + INSERT OR IGNORE) so re-runs are safe.
 // Tracks <channelId>:oldest in last-seen.json so a re-run resumes older (no10 pattern).
-export async function routeBackfill(log: Log, token: string, args: string[]) {
-  const channelId = args[2];
-  if (!channelId || !/^\d{17,20}$/.test(channelId)) {
-    log("usage: maw atlas route backfill <channelId> [--max=N] [--fresh]");
-    return;
-  }
-  if (!token) { log("✗ no DISCORD_BOT_TOKEN — set env or `pass insert discord/atlas-oracle-token`"); return; }
-
-  const max = intArg(args, "--max", 1_000_000);
-  const fresh = args.includes("--fresh");
-  const stateFile = statePath(args);
-  const lastSeen = readLastSeen(stateFile);
+async function backfillChannel(
+  log: Log, token: string, channelId: string, channelLabel: string,
+  store: MessageStore, lastSeen: LastSeen, stateFile: string, max: number, fresh: boolean, verbose: boolean,
+): Promise<number> {
   const oldestKey = `${channelId}:oldest`;
-  const store = openMessageStore(dbPath(args));
-  const startCount = store.count();
-
   let before = fresh ? undefined : lastSeen[oldestKey];
   let fetched = 0;
-  log(`backfill ${channelId} → ${dbPath(args)}${before ? ` (resume older than ${before})` : ""}`);
-
   while (fetched < max) {
     const batch = await getMessagesBefore(token, channelId, 100, before);
     if (!batch.length) break;
@@ -892,15 +879,59 @@ export async function routeBackfill(log: Log, token: string, args: string[]) {
     before = batch[batch.length - 1].id; // oldest in this (newest-first) batch
     lastSeen[oldestKey] = before;
     writeLastSeen(stateFile, lastSeen);
-    log(`  ... ${fetched} fetched (oldest ${snowflakeToIso(before)})`);
+    if (verbose) log(`  ... ${channelLabel}: ${fetched} (oldest ${snowflakeToIso(before)})`);
     if (batch.length < 100) break;
     await sleep(400); // gentle on the rate limit
+  }
+  return fetched;
+}
+
+// route backfill <channelId>|all — download history → index into discord_messages.
+// "all" iterates every text channel across every guild the bot is in.
+export async function routeBackfill(log: Log, token: string, args: string[]) {
+  const arg = args[2];
+  if (!arg || (arg !== "all" && !/^\d{17,20}$/.test(arg))) {
+    log("usage: maw atlas route backfill <channelId>|all [--fresh]   (cap per-channel via ATLAS_BACKFILL_MAX env)");
+    return;
+  }
+  if (!token) { log("✗ no DISCORD_BOT_TOKEN — set env or `pass insert discord/atlas-oracle-token`"); return; }
+
+  const max = intArg(args, "--max", Number.parseInt(process.env.ATLAS_BACKFILL_MAX || "1000000", 10) || 1_000_000);
+  const fresh = args.includes("--fresh");
+  const stateFile = statePath(args);
+  const lastSeen = readLastSeen(stateFile);
+  const store = openMessageStore(dbPath(args));
+  const startCount = store.count();
+
+  let channels: Array<{ id: string; name?: string }> = [];
+  if (arg === "all") {
+    const guilds = await listGuilds(token);
+    const glist = Array.isArray(guilds) ? guilds : [];
+    for (const g of glist) {
+      const chs = await getGuildChannels(token, g.id);
+      for (const c of filterTextChannels(Array.isArray(chs) ? chs : [])) channels.push({ id: c.id, name: `${g.name}/#${c.name}` });
+    }
+    log(`backfill ALL → ${dbPath(args)} — ${channels.length} text channel(s) across ${glist.length} guild(s), cap ${max}/channel`);
+  } else {
+    channels = [{ id: arg }];
+    log(`backfill ${arg} → ${dbPath(args)} (cap ${max})`);
+  }
+
+  let grand = 0;
+  for (const ch of channels) {
+    try {
+      const n = await backfillChannel(log, token, ch.id, ch.name || ch.id, store, lastSeen, stateFile, max, fresh, arg !== "all");
+      grand += n;
+      log(`  ✓ ${ch.name || ch.id}: ${n} fetched`);
+    } catch (e) {
+      log(`  ✗ ${ch.name || ch.id}: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   const indexed = store.count() - startCount;
   const total = store.count();
   store.close();
-  log(`✓ backfill done: ${fetched} fetched, ${indexed} new rows indexed, ${total} total in archive`);
+  log(`✓ backfill done: ${grand} fetched, ${indexed} new rows indexed, ${total} total in archive`);
 }
 
 export async function routeOracles(log: Log, args: string[]) {
