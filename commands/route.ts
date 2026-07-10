@@ -15,9 +15,25 @@ import { dirname, join, resolve } from "path";
 import { execFile, spawn } from "child_process";
 import { findAtlasRepo } from "../lib/repo";
 import { openMessageStore, type MessageStore, type DiscordMsgRow } from "../lib/discord-db";
-import { createThreadFromMessage, joinThread, postMessage, listGuilds, getGuildChannels, filterTextChannels } from "../lib/discord";
+import { createThreadFromMessage, joinThread, postMessage, listGuilds, getGuildChannels, filterTextChannels, getChannel } from "../lib/discord";
 
 type Log = (s: string) => void;
+
+// Resolves guild_id (+ parent_id, for threads) via one REST call per unique
+// channel/thread id, cached for the process lifetime. Discord's message
+// payload doesn't carry guild_id — only the channel endpoint does.
+const channelMetaCache = new Map<string, { guildId: string | null; parentId: string | null }>();
+async function resolveChannelMeta(token: string, channelId: string): Promise<{ guildId: string | null; parentId: string | null }> {
+  const cached = channelMetaCache.get(channelId);
+  if (cached) return cached;
+  let meta = { guildId: null as string | null, parentId: null as string | null };
+  try {
+    const ch = await getChannel(token, channelId);
+    meta = { guildId: ch?.guild_id ?? null, parentId: ch?.parent_id ?? null };
+  } catch { /* leave meta null — better than throwing mid-poll/backfill */ }
+  channelMetaCache.set(channelId, meta);
+  return meta;
+}
 
 type RouteEntry = {
   name?: string;
@@ -243,12 +259,12 @@ async function getSelfBotId(token: string): Promise<string | undefined> {
   }
 }
 
-function toRow(msg: DiscordMessage, channelId: string): DiscordMsgRow {
+function toRow(msg: DiscordMessage, channelId: string, meta: { guildId: string | null; threadId: string | null } = { guildId: null, threadId: null }): DiscordMsgRow {
   return {
     message_id: msg.id,
     channel_id: channelId,
-    thread_id: channelId,
-    guild_id: null,
+    thread_id: meta.threadId,
+    guild_id: meta.guildId,
     author_id: msg.author?.id || "",
     author_name: msg.author?.global_name || msg.author?.username || null,
     author_is_bot: msg.author?.bot ? 1 : 0,
@@ -332,14 +348,17 @@ async function pollOnce(
   let forwarded = 0;
 
   for (const [threadId, route] of Object.entries(table)) {
+    const meta = opts.store ? await resolveChannelMeta(token, threadId) : { guildId: null, parentId: null };
     const messages = await getThreadMessages(token, threadId, opts.limit, lastSeen[threadId]);
     const ordered = messages.slice().sort((a, b) => snowflakeCompare(a.id, b.id));
 
     for (const msg of ordered) {
       if (!msg.id) continue;
 
-      // load EVERY polled message into the DB (idempotent), even bot/empty ones
-      opts.store?.insert(toRow(msg, threadId));
+      // load EVERY polled message into the DB (idempotent), even bot/empty ones.
+      // threadId IS a real Discord thread here (see file header) — its parent_id
+      // is the true channel_id; thread_id is threadId itself.
+      opts.store?.insert(toRow(msg, meta.parentId ?? threadId, { guildId: meta.guildId, threadId }));
 
       const hasContent = !!(msg.content || "").trim();
       const hasAttachments = (msg.attachments || []).length > 0;
@@ -803,6 +822,7 @@ export async function routeMentions(log: Log, token: string, args: string[]) {
   const oracleMap = await loadOracleMentionMap();
   const accessFile = accessPath(args);
   const store = openMessageStore(dbPath(args));
+  const meta = await resolveChannelMeta(token, channelId);
 
   const messages = await getThreadMessages(token, channelId, limit, lastSeen[channelId]);
   const ordered = messages.slice().sort((a, b) => snowflakeCompare(a.id, b.id));
@@ -811,7 +831,10 @@ export async function routeMentions(log: Log, token: string, args: string[]) {
 
   for (const msg of ordered) {
     if (!msg.id) continue;
-    store.insert(toRow(msg, channelId));
+    // channelId here is the real channel being polled for @mentions, not a
+    // thread — thread_id is null (a thread only comes into being below, once
+    // an oracle is actually mentioned, and its replies aren't captured here).
+    store.insert(toRow(msg, channelId, { guildId: meta.guildId, threadId: null }));
 
     // sender-ID gate: only allowlisted authors may open/route (privilege-escalation guard)
     if (!authorAllowed(channelId, msg.author?.id, accessFile)) {
@@ -867,6 +890,7 @@ export async function routeMentions(log: Log, token: string, args: string[]) {
 async function backfillChannel(
   log: Log, token: string, channelId: string, channelLabel: string,
   store: MessageStore, lastSeen: LastSeen, stateFile: string, max: number, fresh: boolean, verbose: boolean,
+  guildId: string | null,
 ): Promise<number> {
   const oldestKey = `${channelId}:oldest`;
   let before = fresh ? undefined : lastSeen[oldestKey];
@@ -874,7 +898,8 @@ async function backfillChannel(
   while (fetched < max) {
     const batch = await getMessagesBefore(token, channelId, 100, before);
     if (!batch.length) break;
-    for (const m of batch) { if (m.id) store.insert(toRow(m, channelId)); }
+    // backfill walks plain text channels, never threads — thread_id is null.
+    for (const m of batch) { if (m.id) store.insert(toRow(m, channelId, { guildId, threadId: null })); }
     fetched += batch.length;
     before = batch[batch.length - 1].id; // oldest in this (newest-first) batch
     lastSeen[oldestKey] = before;
@@ -903,24 +928,25 @@ export async function routeBackfill(log: Log, token: string, args: string[]) {
   const store = openMessageStore(dbPath(args));
   const startCount = store.count();
 
-  let channels: Array<{ id: string; name?: string }> = [];
+  let channels: Array<{ id: string; name?: string; guildId: string | null }> = [];
   if (arg === "all") {
     const guilds = await listGuilds(token);
     const glist = Array.isArray(guilds) ? guilds : [];
     for (const g of glist) {
       const chs = await getGuildChannels(token, g.id);
-      for (const c of filterTextChannels(Array.isArray(chs) ? chs : [])) channels.push({ id: c.id, name: `${g.name}/#${c.name}` });
+      for (const c of filterTextChannels(Array.isArray(chs) ? chs : [])) channels.push({ id: c.id, name: `${g.name}/#${c.name}`, guildId: g.id });
     }
     log(`backfill ALL → ${dbPath(args)} — ${channels.length} text channel(s) across ${glist.length} guild(s), cap ${max}/channel`);
   } else {
-    channels = [{ id: arg }];
+    const meta = await resolveChannelMeta(token, arg);
+    channels = [{ id: arg, guildId: meta.guildId }];
     log(`backfill ${arg} → ${dbPath(args)} (cap ${max})`);
   }
 
   let grand = 0;
   for (const ch of channels) {
     try {
-      const n = await backfillChannel(log, token, ch.id, ch.name || ch.id, store, lastSeen, stateFile, max, fresh, arg !== "all");
+      const n = await backfillChannel(log, token, ch.id, ch.name || ch.id, store, lastSeen, stateFile, max, fresh, arg !== "all", ch.guildId);
       grand += n;
       log(`  ✓ ${ch.name || ch.id}: ${n} fetched`);
     } catch (e) {
