@@ -5,7 +5,14 @@ export async function serve(log: (s: string) => void, args: string[]) {
   if (!repo) { log("✗ atlas-oracle repo not found (need parliament/api/server.ts)"); return; }
 
   const port = args.find(a => a.startsWith("--port="))?.split("=")[1] || "4567";
-  const password = process.env.DASHBOARD_PASSWORD || "catlab";
+  // No hardcoded default password — a committed default is a published
+  // credential. The server itself refuses to start without one (fail-closed).
+  const password = process.env.DASHBOARD_PASSWORD;
+  if (!password) {
+    log("✗ DASHBOARD_PASSWORD not set — refusing to launch PARLIAMENT.");
+    log("  fix: DASHBOARD_PASSWORD=$(pass show dashboard/parliament) maw atlas serve");
+    return;
+  }
   const autoBuild = args.includes("--build");
   const { execSync } = require("child_process");
   const { existsSync } = require("fs");
