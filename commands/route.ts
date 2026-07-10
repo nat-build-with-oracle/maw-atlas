@@ -887,24 +887,38 @@ export async function routeMentions(log: Log, token: string, args: string[]) {
 // before= cursor, 100/page) and index every message into the discord_messages
 // sqlite table. Idempotent (snowflake PK + INSERT OR IGNORE) so re-runs are safe.
 // Tracks <channelId>:oldest in last-seen.json so a re-run resumes older (no10 pattern).
+//
+// Modes:
+//   default — resume OLDER from the :oldest cursor (extends history backward;
+//             structurally cannot see new messages once a cursor exists)
+//   fresh   — ignore the cursor, re-walk from newest (re-writes :oldest!)
+//   newest  — freshness sweep: walk backward from NOW, stop as soon as a page
+//             is entirely already-archived, and NEVER touch the :oldest cursor.
+//             This is the scheduled-ingest primitive: cheap (1 page when idle),
+//             ingest-only (no routing/forwarding), cursor-safe.
 async function backfillChannel(
   log: Log, token: string, channelId: string, channelLabel: string,
   store: MessageStore, lastSeen: LastSeen, stateFile: string, max: number, fresh: boolean, verbose: boolean,
-  guildId: string | null,
+  guildId: string | null, newest = false,
 ): Promise<number> {
   const oldestKey = `${channelId}:oldest`;
-  let before = fresh ? undefined : lastSeen[oldestKey];
+  let before = fresh || newest ? undefined : lastSeen[oldestKey];
   let fetched = 0;
   while (fetched < max) {
     const batch = await getMessagesBefore(token, channelId, 100, before);
     if (!batch.length) break;
     // backfill walks plain text channels, never threads — thread_id is null.
-    for (const m of batch) { if (m.id) store.insert(toRow(m, channelId, { guildId, threadId: null })); }
-    fetched += batch.length;
+    let inserted = 0;
+    for (const m of batch) { if (m.id) inserted += store.insert(toRow(m, channelId, { guildId, threadId: null })); }
+    fetched += newest ? inserted : batch.length;
     before = batch[batch.length - 1].id; // oldest in this (newest-first) batch
-    lastSeen[oldestKey] = before;
-    writeLastSeen(stateFile, lastSeen);
+    if (!newest) {
+      lastSeen[oldestKey] = before;
+      writeLastSeen(stateFile, lastSeen);
+    }
     if (verbose) log(`  ... ${channelLabel}: ${fetched} (oldest ${snowflakeToIso(before)})`);
+    // newest mode: a page with zero new rows means we've met the archive — done.
+    if (newest && inserted === 0) break;
     if (batch.length < 100) break;
     await sleep(400); // gentle on the rate limit
   }
@@ -916,13 +930,15 @@ async function backfillChannel(
 export async function routeBackfill(log: Log, token: string, args: string[]) {
   const arg = args[2];
   if (!arg || (arg !== "all" && !/^\d{17,20}$/.test(arg))) {
-    log("usage: maw atlas route backfill <channelId>|all [--fresh]   (cap per-channel via ATLAS_BACKFILL_MAX env)");
+    log("usage: maw atlas route backfill <channelId>|all [--fresh|--newest]   (cap per-channel via ATLAS_BACKFILL_MAX env)");
     return;
   }
   if (!token) { log("✗ no DISCORD_BOT_TOKEN — set env or `pass insert discord/atlas-oracle-token`"); return; }
 
   const max = intArg(args, "--max", Number.parseInt(process.env.ATLAS_BACKFILL_MAX || "1000000", 10) || 1_000_000);
   const fresh = args.includes("--fresh");
+  const newest = args.includes("--newest");
+  if (fresh && newest) { log("✗ --fresh and --newest are mutually exclusive"); return; }
   const stateFile = statePath(args);
   const lastSeen = readLastSeen(stateFile);
   const store = openMessageStore(dbPath(args));
@@ -946,7 +962,7 @@ export async function routeBackfill(log: Log, token: string, args: string[]) {
   let grand = 0;
   for (const ch of channels) {
     try {
-      const n = await backfillChannel(log, token, ch.id, ch.name || ch.id, store, lastSeen, stateFile, max, fresh, arg !== "all", ch.guildId);
+      const n = await backfillChannel(log, token, ch.id, ch.name || ch.id, store, lastSeen, stateFile, max, fresh, arg !== "all", ch.guildId, newest);
       grand += n;
       log(`  ✓ ${ch.name || ch.id}: ${n} fetched`);
     } catch (e) {

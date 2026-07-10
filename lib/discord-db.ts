@@ -29,7 +29,8 @@ export interface DiscordMsgRow {
 }
 
 export interface MessageStore {
-  insert: (row: DiscordMsgRow) => void;
+  /** Returns 1 if the row was new, 0 if the snowflake was already archived. */
+  insert: (row: DiscordMsgRow) => number;
   markRouted: (messageId: string, routedTo: string, routedAt: string) => void;
   count: () => number;
   close: () => void;
@@ -79,7 +80,7 @@ export function openMessageStore(dbPath: string): MessageStore {
       insertStmt.run(
         r.message_id, r.channel_id, r.thread_id, r.guild_id, r.author_id,
         r.author_name, r.author_is_bot, r.content, r.attachments_json, r.ts, r.created_at,
-      ),
+      ).changes,
     markRouted: (id, to, at) => routedStmt.run(to, at, id),
     count: () => (countStmt.get() as { c: number }).c,
     close: () => db.close(),
