@@ -1,19 +1,4 @@
-import { getMe, setBotAvatar } from "../lib/discord";
-import { readFileSync, existsSync } from "fs";
-import { resolve } from "path";
-
-function toDataUri(filePath: string): string {
-  const abs = resolve(filePath);
-  if (!existsSync(abs)) throw new Error(`file not found: ${abs}`);
-  const buf = readFileSync(abs);
-  const ext = abs.split(".").pop()?.toLowerCase();
-  const mime = ext === "png" ? "image/png"
-    : ext === "jpg" || ext === "jpeg" ? "image/jpeg"
-    : ext === "gif" ? "image/gif"
-    : ext === "webp" ? "image/webp"
-    : "image/png";
-  return `data:${mime};base64,${buf.toString("base64")}`;
-}
+import { getMe, setBotAvatar, toDataUri } from "../lib/discord";
 
 export async function avatar(log: (s: string) => void, token: string, args: string[]) {
   const sub = args[1];

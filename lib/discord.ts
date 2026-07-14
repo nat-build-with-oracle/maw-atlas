@@ -154,6 +154,21 @@ export async function updateApplication(token: string, appId: string, data: any)
 
 // ── Bot Avatar ──
 
+export function toDataUri(filePath: string): string {
+  const { readFileSync, existsSync } = require("fs");
+  const { resolve } = require("path");
+  const abs = resolve(filePath);
+  if (!existsSync(abs)) throw new Error(`file not found: ${abs}`);
+  const buf = readFileSync(abs);
+  const ext = abs.split(".").pop()?.toLowerCase();
+  const mime = ext === "png" ? "image/png"
+    : ext === "jpg" || ext === "jpeg" ? "image/jpeg"
+    : ext === "gif" ? "image/gif"
+    : ext === "webp" ? "image/webp"
+    : "image/png";
+  return `data:${mime};base64,${buf.toString("base64")}`;
+}
+
 export async function setBotAvatar(token: string, avatarBase64: string) {
   return request("/users/@me", token, "PATCH", { avatar: avatarBase64 });
 }
