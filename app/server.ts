@@ -138,6 +138,9 @@ Bun.serve({
       new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 
     if (p === "/") return new Response(INDEX, { headers: { "Content-Type": "text/html; charset=utf-8" } });
+    // Bifröst-flavor variant (linen ledger) — same API, different skin; kept
+    // side-by-side so both designs stay comparable at runtime
+    if (p === "/bifrost") return new Response(Bun.file(join(import.meta.dir, "bifrost.html")), { headers: { "Content-Type": "text/html; charset=utf-8" } });
     if (p === "/api/stats") return json(stats());
     if (p === "/api/names/refresh" && req.method === "POST") { await refreshNames(); return json({ ok: true, namesAt }); }
     if (p === "/api/messages") {
