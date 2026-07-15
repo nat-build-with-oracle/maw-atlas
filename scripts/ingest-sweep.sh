@@ -1,10 +1,11 @@
 #!/bin/zsh
 # ingest-sweep — cursor-based freshness sweep over every Discord channel.
-# Runs `route backfill all --incremental`: walks each channel FORWARD from its
-# archive high-watermark (MAX(message_id) — nh's implicit-cursor proposal,
-# 2026-07-15), so an idle cycle downloads nothing instead of one full page of
-# already-known messages per channel. Channels with no rows yet fall back to
-# a newest-style backward walk. Never touches :oldest cursors.
+# Runs `route backfill all` (incremental IS the default since 2026-07-15):
+# walks each channel FORWARD from its archive high-watermark (MAX(message_id)
+# — nh's implicit-cursor proposal), so an idle cycle downloads nothing instead
+# of one full page of already-known messages per channel. Channels with no
+# rows yet fall back to a newest-style backward walk. Never touches :oldest
+# cursors. Deep history walk = `route backfill <ch> --full`.
 #
 # Owner: atlas-discord-backfill-oracle (producer/ingest-keeper). Scheduled on
 # m5 via pm2 (name: mirror-ingest-sweep, cron_restart */10, autorestart off —
@@ -23,5 +24,5 @@ import { routeBackfill } from "./commands/route";
 import { getToken } from "./lib/discord";
 const t = getToken();
 if (!t) { console.error("no DISCORD_BOT_TOKEN / pass token"); process.exit(1); }
-await routeBackfill(console.log, t, ["route", "backfill", "all", "--incremental"]);
+await routeBackfill(console.log, t, ["route", "backfill", "all"]);
 '

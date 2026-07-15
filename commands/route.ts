@@ -403,8 +403,8 @@ function usage(log: Log) {
   log("  maw atlas route daemon|watch [--interval=5000]   run foreground polling loop");
   log("  maw atlas route oracles [--json]                 list all fleet oracles + maw-hey targets");
   log("  maw atlas route mentions <channelId> [--dry-run] @mention→open thread→maw hey oracle (Hermes)");
-  log("  maw atlas route backfill <channelId>|all         download history → index to sqlite (ATLAS_BACKFILL_MAX caps/chan)");
-  log("                            [--incremental]        forward from MAX(message_id) cursor — O(new) payload sweep");
+  log("  maw atlas route backfill <channelId>|all         incremental cursor sweep (default) — only new messages past MAX(message_id)");
+  log("                            [--full]               deep walk: resume older from :oldest cursor toward the history floor");
   log("");
   log("options:");
   log("  --config=path       routing table (default: .discord/thread-routing.json; --routing alias supported)");
@@ -885,18 +885,17 @@ export async function routeMentions(log: Log, token: string, args: string[]) {
 // Tracks <channelId>:oldest in last-seen.json so a re-run resumes older (no10 pattern).
 //
 // Modes:
-//   default — resume OLDER from the :oldest cursor (extends history backward;
+//   incremental (DEFAULT) — forward walk with after=MAX(message_id) (the
+//             implicit ingest cursor already in the archive; nh's proposal
+//             2026-07-15). O(new) payload; channels with no rows yet fall
+//             back to a newest-style backward walk.
+//   full    — resume OLDER from the :oldest cursor (extends history backward;
 //             structurally cannot see new messages once a cursor exists)
 //   fresh   — ignore the cursor, re-walk from newest (re-writes :oldest!)
 //   newest  — freshness sweep: walk backward from NOW, stop as soon as a page
 //             is entirely already-archived, and NEVER touch the :oldest cursor.
 //             This is the scheduled-ingest primitive: cheap (1 page when idle),
 //             ingest-only (no routing/forwarding), cursor-safe.
-//   incremental — forward walk with after=MAX(message_id) (the implicit ingest
-//             cursor already in the archive; nh's proposal 2026-07-15). Same
-//             request count as newest when idle but the response is EMPTY
-//             instead of 100 known messages — O(new) payload. Channels with no
-//             rows yet fall back to a newest-style backward walk.
 
 // walk FORWARD from the archive's high-watermark; returns rows inserted.
 async function backfillChannelIncremental(
@@ -957,7 +956,7 @@ async function backfillChannel(
 export async function routeBackfill(log: Log, token: string, args: string[]) {
   const arg = args[2];
   if (!arg || (arg !== "all" && !/^\d{17,20}$/.test(arg))) {
-    log("usage: maw atlas route backfill <channelId>|all [--fresh|--newest|--incremental]   (cap per-channel via ATLAS_BACKFILL_MAX env)");
+    log("usage: maw atlas route backfill <channelId>|all [--full|--fresh|--newest]   (default: incremental cursor sweep; cap via ATLAS_BACKFILL_MAX)");
     return;
   }
   if (!token) { log("✗ no DISCORD_BOT_TOKEN — set env or `pass insert discord/atlas-oracle-token`"); return; }
@@ -965,8 +964,12 @@ export async function routeBackfill(log: Log, token: string, args: string[]) {
   const max = intArg(args, "--max", Number.parseInt(process.env.ATLAS_BACKFILL_MAX || "1000000", 10) || 1_000_000);
   const fresh = args.includes("--fresh");
   const newest = args.includes("--newest");
-  const incremental = args.includes("--incremental");
-  if ([fresh, newest, incremental].filter(Boolean).length > 1) { log("✗ --fresh / --newest / --incremental are mutually exclusive"); return; }
+  const full = args.includes("--full");
+  if ([fresh, newest, full, args.includes("--incremental")].filter(Boolean).length > 1) { log("✗ --full / --fresh / --newest / --incremental are mutually exclusive"); return; }
+  // incremental is the DEFAULT (Nat, 2026-07-15): a bare `backfill <ch>|all` only
+  // pulls what's new past the MAX(message_id) cursor. --full restores the deep
+  // walk (resume older from the :oldest cursor toward the history floor).
+  const incremental = !fresh && !newest && !full;
   const stateFile = statePath(args);
   const lastSeen = readLastSeen(stateFile);
   const store = openMessageStore(dbPath(args));

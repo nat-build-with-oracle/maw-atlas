@@ -9,8 +9,8 @@
  *               between them were lost (interrupted walk) — resume re-fetches them
  *   deleted   — archived channel Discord now 404s (can't verify; kept per Nothing is Deleted)
  *
- * Fix for zero-row/bottom/cursor is the same verb: `route backfill <channelId>`
- * (default mode resumes older from the :oldest cursor; idempotent).
+ * Fix for zero-row/bottom/cursor is the same verb: `route backfill <channelId> --full`
+ * (deep walk resuming older from the :oldest cursor; idempotent).
  *
  * Usage: bun scripts/detect-gaps.ts [--db path] [--json out.json]
  * Read-only: never writes to the archive or cursors.
@@ -113,7 +113,7 @@ for (const g of gaps) {
   console.log(`  [${g.kind}] ${g.name ? "#" + g.name : g.channelId} (${g.guild || "?"}) — ${g.detail}`);
 }
 const fixable = gaps.filter(g => g.kind !== "deleted");
-console.log(`\n${fixable.length} แก้ได้ด้วย route backfill <channelId> · ${gaps.length - fixable.length} เป็น channel ที่หายไปแล้ว`);
+console.log(`\n${fixable.length} แก้ได้ด้วย route backfill <channelId> --full · ${gaps.length - fixable.length} เป็น channel ที่หายไปแล้ว`);
 
 if (JSON_OUT) {
   writeFileSync(JSON_OUT, JSON.stringify({ at: new Date().toISOString(), probed, gaps }, null, 1));
