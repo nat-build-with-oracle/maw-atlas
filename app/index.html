@@ -56,12 +56,23 @@
 
   <div class="bar">
     <button id="b-sweep">⬇ Sweep เดี๋ยวนี้ (ทุก channel)</button>
+    <button class="ghost" id="b-gaps">🔍 สแกนหา gaps</button>
     <button class="ghost" id="b-refresh">↻ รีเฟรชข้อมูล</button>
     <button class="ghost" id="b-names">🏷 โหลดชื่อ channel ใหม่</button>
     <span class="dim" id="jobstate"></span>
   </div>
 
   <div id="log"></div>
+
+  <div id="gaps" style="display:none; margin-bottom:20px">
+    <h1 style="margin-bottom:8px">🕳 Gaps <span class="dim" id="gaps-at" style="font-size:12px"></span></h1>
+    <div class="tablewrap">
+    <table>
+      <thead><tr><th>ชนิด</th><th>channel</th><th>guild</th><th>รายละเอียด</th><th></th></tr></thead>
+      <tbody id="gaps-rows"></tbody>
+    </table>
+    </div>
+  </div>
 
   <div class="tablewrap">
   <table>
@@ -112,7 +123,7 @@ function watchJob() {
     $("log").textContent = (j.lines || []).join("\n");
     $("log").scrollTop = $("log").scrollHeight;
     $("b-sweep").disabled = !j.done;
-    if (j.done) { clearInterval(polling); polling = null; loadStats(); }
+    if (j.done) { clearInterval(polling); polling = null; loadStats(); loadGaps(); }
   }, 1000);
 }
 
@@ -122,6 +133,22 @@ async function post(url, body) {
   return true;
 }
 
+const KIND = { "zero-row": ["ว่าง", "var(--warn)"], bottom: ["ก้นขาด", "var(--bad)"], cursor: ["hole", "var(--bad)"], deleted: ["ตายแล้ว", "var(--dim)"] };
+async function loadGaps() {
+  const g = await fetch("/api/gaps").then(r => r.json());
+  if (!g.at) return;
+  $("gaps").style.display = "block";
+  $("gaps-at").textContent = "สแกนเมื่อ " + fmtT(g.at) + (g.gaps.length ? ` · ${g.gaps.length} gaps` : " · ไม่พบ gap 🎉");
+  $("gaps-rows").innerHTML = g.gaps.map(x => `
+    <tr>
+      <td><span style="color:${(KIND[x.kind] || ["?"])[1]}">${(KIND[x.kind] || [x.kind])[0]}</span></td>
+      <td class="name">${x.name ? "#" + x.name : '<span class="dim">' + x.channelId + "</span>"}</td>
+      <td class="dim">${x.guild || "—"}</td>
+      <td class="dim">${x.detail}</td>
+      <td>${x.kind === "deleted" ? "" : `<button class="ghost" onclick="backfill('${x.channelId}')">⬇ เติม</button>`}</td>
+    </tr>`).join("");
+}
+$("b-gaps").onclick = async () => { if (await post("/api/gaps/scan")) watchJob(); };
 $("b-sweep").onclick = async () => { if (await post("/api/sweep")) watchJob(); };
 $("b-refresh").onclick = loadStats;
 $("b-names").onclick = async () => { $("b-names").disabled = true; await post("/api/names/refresh"); $("b-names").disabled = false; loadStats(); };
@@ -143,6 +170,7 @@ async function view(id, name) {
   $("msgs").scrollIntoView({ behavior: "smooth" });
 }
 loadStats();
+loadGaps();
 </script>
 </body>
 </html>

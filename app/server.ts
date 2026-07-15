@@ -16,6 +16,7 @@ const MAW_ATLAS = process.env.MAW_ATLAS || "/opt/Code/github.com/nat-build-with-
 const DB_PATH = process.env.ATLAS_ROUTE_DB
   || "/opt/Code/github.com/Soul-Brews-Studio/atlas-oracle/.maw/atlas-route/messages.sqlite";
 const SWEEP_LOG = "/Users/nat/.pm2/logs/mirror-ingest-sweep-out.log";
+const GAPS_JSON = "/tmp/backfill-gaps.json";
 const PORT = Number(process.env.BACKFILL_APP_PORT || 47710);
 
 const { getToken, listGuilds, getGuildChannels } = await import(join(MAW_ATLAS, "lib/discord.ts"));
@@ -40,11 +41,11 @@ async function refreshNames(): Promise<void> {
 // ── one job at a time (sweep or per-channel backfill) ──
 type Job = { title: string; startedAt: string; lines: string[]; done: boolean; code: number | null };
 let job: Job | null = null;
-function startJob(title: string, args: string[]): boolean {
+function startJob(title: string, argv: string[]): boolean {
   if (job && !job.done) return false;
   const j: Job = { title, startedAt: new Date().toISOString(), lines: [], done: false, code: null };
   job = j;
-  const child = spawn("bun", ["index.ts", ...args], {
+  const child = spawn("bun", argv, {
     cwd: MAW_ATLAS,
     env: { ...process.env, ATLAS_ROUTE_DB: DB_PATH },
   });
@@ -123,15 +124,23 @@ Bun.serve({
     }
     if (p === "/api/job") return json(job || { done: true, lines: [], title: null });
     if (p === "/api/sweep" && req.method === "POST") {
-      return startJob("Sweep ทุก channel (--newest)", ["route", "backfill", "all", "--newest"])
+      return startJob("Sweep ทุก channel (--newest)", ["index.ts", "route", "backfill", "all", "--newest"])
         ? json({ ok: true }) : json({ error: "มี job ค้างอยู่" }, 409);
     }
     if (p === "/api/backfill" && req.method === "POST") {
       const { channelId } = await req.json().catch(() => ({} as any));
       if (!/^\d{17,20}$/.test(channelId || "")) return json({ error: "bad channelId" }, 400);
       const label = names.channels[channelId]?.name || channelId;
-      return startJob(`Backfill เต็ม #${label}`, ["route", "backfill", channelId])
+      return startJob(`Backfill เต็ม #${label}`, ["index.ts", "route", "backfill", channelId])
         ? json({ ok: true }) : json({ error: "มี job ค้างอยู่" }, 409);
+    }
+    if (p === "/api/gaps/scan" && req.method === "POST") {
+      return startJob("สแกนหา gaps ทุก channel", ["scripts/detect-gaps.ts", "--json", GAPS_JSON])
+        ? json({ ok: true }) : json({ error: "มี job ค้างอยู่" }, 409);
+    }
+    if (p === "/api/gaps") {
+      try { return json(JSON.parse(await Bun.file(GAPS_JSON).text())); }
+      catch { return json({ at: null, gaps: [] }); }
     }
     if (p === "/api/export") {
       const ch = url.searchParams.get("channel_id") || "";
