@@ -38,6 +38,7 @@ export interface MessageStore {
 
 const SCHEMA = `
 PRAGMA journal_mode = WAL;
+PRAGMA busy_timeout = 10000;
 CREATE TABLE IF NOT EXISTS discord_messages (
   message_id       TEXT PRIMARY KEY,
   channel_id       TEXT NOT NULL,
