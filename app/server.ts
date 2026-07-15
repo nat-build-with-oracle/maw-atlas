@@ -124,7 +124,7 @@ Bun.serve({
     }
     if (p === "/api/job") return json(job || { done: true, lines: [], title: null });
     if (p === "/api/sweep" && req.method === "POST") {
-      return startJob("Sweep ทุก channel (--newest)", ["index.ts", "route", "backfill", "all", "--newest"])
+      return startJob("Sweep ทุก channel (--incremental)", ["index.ts", "route", "backfill", "all", "--incremental"])
         ? json({ ok: true }) : json({ error: "มี job ค้างอยู่" }, 409);
     }
     if (p === "/api/backfill" && req.method === "POST") {
