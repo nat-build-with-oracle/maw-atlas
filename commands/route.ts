@@ -15,7 +15,7 @@ import { dirname, join, resolve } from "path";
 import { execFile, spawn } from "child_process";
 import { findAtlasRepo } from "../lib/repo";
 import { openMessageStore, type MessageStore, type DiscordMsgRow } from "../lib/discord-db";
-import { createThreadFromMessage, joinThread, postMessage, listGuilds, getGuildChannels, filterTextChannels, getChannel } from "../lib/discord";
+import { createThreadFromMessage, joinThread, postMessage, listGuilds, getGuildChannels, filterTextChannels, getChannel, request as discordRequest } from "../lib/discord";
 
 type Log = (s: string) => void;
 
@@ -73,8 +73,6 @@ type PollOpts = {
   store?: MessageStore;
 };
 
-const API = "https://discord.com/api/v10";
-const UA = "maw-atlas/1.0.0";
 const DEFAULT_ATLAS_REPO = "/opt/Code/github.com/Soul-Brews-Studio/atlas-oracle";
 const DEFAULT_ROUTING_TABLE = `${DEFAULT_ATLAS_REPO}/.discord/thread-routing.json`;
 const DEFAULT_TEAMS_DIR = `${DEFAULT_ATLAS_REPO}/.maw/teams`;
@@ -227,12 +225,9 @@ function writeRuntimeStatus(args: string[], patch: Record<string, any>) {
   writeJson(file, { ...current, ...patch });
 }
 
+// delegates to lib/discord request() so polling/backfill inherit 429 backoff
 async function discordGet(token: string, path: string): Promise<any> {
-  const res = await fetch(`${API}${path}`, {
-    headers: { Authorization: `Bot ${token}`, "User-Agent": UA },
-  });
-  if (!res.ok) throw new Error(`Discord ${res.status} GET ${path}`);
-  return res.json();
+  return discordRequest(path, token);
 }
 
 async function getThreadMessages(token: string, threadId: string, limit: number, after?: string): Promise<DiscordMessage[]> {

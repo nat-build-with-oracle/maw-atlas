@@ -13,19 +13,39 @@ export function getToken(): string | null {
   } catch { return null; }
 }
 
-async function request(path: string, token: string, method = "GET", body?: any): Promise<any> {
-  const res = await fetch(`${API}${path}`, {
-    method,
-    headers: {
-      Authorization: `Bot ${token}`,
-      "Content-Type": "application/json",
-      "User-Agent": UA,
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  if (!res.ok) throw new Error(`Discord ${res.status} ${method} ${path}`);
-  const txt = await res.text();
-  try { return JSON.parse(txt); } catch { return { raw: txt }; }
+const MAX_RETRIES = 5;
+const MAX_BACKOFF_MS = 60_000;
+
+function sleep(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// 429s carry a Retry-After header (seconds, possibly fractional) — honor it,
+// capped at MAX_BACKOFF_MS, falling back to exponential backoff. 5xx retries
+// are GET-only: a replayed mutation could double-apply.
+export async function request(path: string, token: string, method = "GET", body?: any): Promise<any> {
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(`${API}${path}`, {
+      method,
+      headers: {
+        Authorization: `Bot ${token}`,
+        "Content-Type": "application/json",
+        "User-Agent": UA,
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const retryable = res.status === 429 || (res.status >= 500 && method === "GET");
+    if (retryable && attempt < MAX_RETRIES) {
+      const retryAfterMs = Number(res.headers.get("retry-after")) * 1000;
+      const backoffMs = retryAfterMs > 0 ? retryAfterMs : 1000 * 2 ** attempt;
+      await res.arrayBuffer().catch(() => {});
+      await sleep(Math.min(backoffMs, MAX_BACKOFF_MS) + Math.floor(Math.random() * 250));
+      continue;
+    }
+    if (!res.ok) throw new Error(`Discord ${res.status} ${method} ${path}${attempt ? ` (after ${attempt} retries)` : ""}`);
+    const txt = await res.text();
+    try { return JSON.parse(txt); } catch { return { raw: txt }; }
+  }
 }
 
 // ── Identity ──
