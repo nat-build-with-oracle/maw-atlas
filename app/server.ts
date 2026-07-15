@@ -124,14 +124,16 @@ Bun.serve({
     }
     if (p === "/api/job") return json(job || { done: true, lines: [], title: null });
     if (p === "/api/sweep" && req.method === "POST") {
-      return startJob("Sweep ทุก channel (--incremental)", ["index.ts", "route", "backfill", "all", "--incremental"])
+      return startJob("Sweep ทุก channel (incremental)", ["index.ts", "route", "backfill", "all"])
         ? json({ ok: true }) : json({ error: "มี job ค้างอยู่" }, 409);
     }
     if (p === "/api/backfill" && req.method === "POST") {
       const { channelId } = await req.json().catch(() => ({} as any));
       if (!/^\d{17,20}$/.test(channelId || "")) return json({ error: "bad channelId" }, 400);
       const label = names.channels[channelId]?.name || channelId;
-      return startJob(`Backfill เต็ม #${label}`, ["index.ts", "route", "backfill", channelId])
+      // --full: per-channel backfill from the app means "give me the whole history /
+      // fill the bottom gap", not the cursor sweep (that's the sweep button)
+      return startJob(`Backfill เต็ม #${label}`, ["index.ts", "route", "backfill", channelId, "--full"])
         ? json({ ok: true }) : json({ error: "มี job ค้างอยู่" }, 409);
     }
     if (p === "/api/gaps/scan" && req.method === "POST") {
