@@ -1,0 +1,15 @@
+#!/bin/zsh
+# Backfill.app launcher — starts the Bun control-panel server (if not already
+# running) and opens it in the default browser. LSUIElement=true → no Dock icon.
+APP_DIR="/opt/Code/github.com/Soul-Brews-Studio/atlas-discord-backfill-oracle/app"
+PORT="${BACKFILL_APP_PORT:-47710}"
+export PATH="/opt/homebrew/bin:$HOME/.bun/bin:/usr/local/bin:$PATH"
+
+if ! curl -s -o /dev/null --max-time 1 "http://localhost:$PORT/api/stats"; then
+  nohup bun "$APP_DIR/server.ts" > /tmp/backfill-app.log 2>&1 &
+  for i in {1..50}; do
+    curl -s -o /dev/null --max-time 1 "http://localhost:$PORT/api/stats" && break
+    sleep 0.2
+  done
+fi
+open "http://localhost:$PORT"
