@@ -33,6 +33,13 @@ export interface MessageStore {
   insert: (row: DiscordMsgRow) => number;
   markRouted: (messageId: string, routedTo: string, routedAt: string) => void;
   count: () => number;
+  /**
+   * High-watermark snowflake for a channel (implicit ingest cursor), or null if
+   * the channel has no rows. CAST via INTEGER: message_id is TEXT and snowflakes
+   * vary 17-20 digits, so a plain MAX() would compare lexicographically; the
+   * result comes back CAST to TEXT because int64 snowflakes overflow JS numbers.
+   */
+  maxId: (channelId: string) => string | null;
   close: () => void;
 }
 
@@ -75,6 +82,9 @@ export function openMessageStore(dbPath: string): MessageStore {
     `UPDATE discord_messages SET routed_to = ?, routed_at = ? WHERE message_id = ?`,
   );
   const countStmt = db.query("SELECT count(*) AS c FROM discord_messages");
+  const maxIdStmt = db.prepare(
+    "SELECT CAST(MAX(CAST(message_id AS INTEGER)) AS TEXT) AS m FROM discord_messages WHERE channel_id = ?",
+  );
 
   return {
     insert: (r) =>
@@ -84,6 +94,7 @@ export function openMessageStore(dbPath: string): MessageStore {
       ).changes,
     markRouted: (id, to, at) => routedStmt.run(to, at, id),
     count: () => (countStmt.get() as { c: number }).c,
+    maxId: (channelId) => (maxIdStmt.get(channelId) as { m: string | null } | undefined)?.m ?? null,
     close: () => db.close(),
   };
 }

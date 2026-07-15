@@ -404,6 +404,7 @@ function usage(log: Log) {
   log("  maw atlas route oracles [--json]                 list all fleet oracles + maw-hey targets");
   log("  maw atlas route mentions <channelId> [--dry-run] @mention→open thread→maw hey oracle (Hermes)");
   log("  maw atlas route backfill <channelId>|all         download history → index to sqlite (ATLAS_BACKFILL_MAX caps/chan)");
+  log("                            [--incremental]        forward from MAX(message_id) cursor — O(new) payload sweep");
   log("");
   log("options:");
   log("  --config=path       routing table (default: .discord/thread-routing.json; --routing alias supported)");
@@ -891,6 +892,37 @@ export async function routeMentions(log: Log, token: string, args: string[]) {
 //             is entirely already-archived, and NEVER touch the :oldest cursor.
 //             This is the scheduled-ingest primitive: cheap (1 page when idle),
 //             ingest-only (no routing/forwarding), cursor-safe.
+//   incremental — forward walk with after=MAX(message_id) (the implicit ingest
+//             cursor already in the archive; nh's proposal 2026-07-15). Same
+//             request count as newest when idle but the response is EMPTY
+//             instead of 100 known messages — O(new) payload. Channels with no
+//             rows yet fall back to a newest-style backward walk.
+
+// walk FORWARD from the archive's high-watermark; returns rows inserted.
+async function backfillChannelIncremental(
+  log: Log, token: string, channelId: string, channelLabel: string,
+  store: MessageStore, max: number, verbose: boolean, guildId: string | null,
+): Promise<number> {
+  let after = store.maxId(channelId);
+  let fetched = 0;
+  while (fetched < max && after) {
+    const batch = await getThreadMessages(token, channelId, 100, after);
+    if (!batch.length) break;
+    let newestId = after;
+    for (const m of batch) {
+      if (!m.id) continue;
+      fetched += store.insert(toRow(m, channelId, { guildId, threadId: null }));
+      if (snowflakeCompare(m.id, newestId) > 0) newestId = m.id;
+    }
+    if (newestId === after) break; // no forward progress — never spin on the same page
+    after = newestId;
+    if (verbose) log(`  ... ${channelLabel}: +${fetched} (up to ${snowflakeToIso(after)})`);
+    if (batch.length < 100) break;
+    await sleep(400);
+  }
+  return fetched;
+}
+
 async function backfillChannel(
   log: Log, token: string, channelId: string, channelLabel: string,
   store: MessageStore, lastSeen: LastSeen, stateFile: string, max: number, fresh: boolean, verbose: boolean,
@@ -925,7 +957,7 @@ async function backfillChannel(
 export async function routeBackfill(log: Log, token: string, args: string[]) {
   const arg = args[2];
   if (!arg || (arg !== "all" && !/^\d{17,20}$/.test(arg))) {
-    log("usage: maw atlas route backfill <channelId>|all [--fresh|--newest]   (cap per-channel via ATLAS_BACKFILL_MAX env)");
+    log("usage: maw atlas route backfill <channelId>|all [--fresh|--newest|--incremental]   (cap per-channel via ATLAS_BACKFILL_MAX env)");
     return;
   }
   if (!token) { log("✗ no DISCORD_BOT_TOKEN — set env or `pass insert discord/atlas-oracle-token`"); return; }
@@ -933,7 +965,8 @@ export async function routeBackfill(log: Log, token: string, args: string[]) {
   const max = intArg(args, "--max", Number.parseInt(process.env.ATLAS_BACKFILL_MAX || "1000000", 10) || 1_000_000);
   const fresh = args.includes("--fresh");
   const newest = args.includes("--newest");
-  if (fresh && newest) { log("✗ --fresh and --newest are mutually exclusive"); return; }
+  const incremental = args.includes("--incremental");
+  if ([fresh, newest, incremental].filter(Boolean).length > 1) { log("✗ --fresh / --newest / --incremental are mutually exclusive"); return; }
   const stateFile = statePath(args);
   const lastSeen = readLastSeen(stateFile);
   const store = openMessageStore(dbPath(args));
@@ -947,7 +980,7 @@ export async function routeBackfill(log: Log, token: string, args: string[]) {
       const chs = await getGuildChannels(token, g.id);
       for (const c of filterTextChannels(Array.isArray(chs) ? chs : [])) channels.push({ id: c.id, name: `${g.name}/#${c.name}`, guildId: g.id });
     }
-    log(`backfill ALL → ${dbPath(args)} — ${channels.length} text channel(s) across ${glist.length} guild(s), cap ${max}/channel`);
+    log(`backfill ALL${incremental ? " (incremental)" : newest ? " (newest)" : ""} → ${dbPath(args)} — ${channels.length} text channel(s) across ${glist.length} guild(s), cap ${max}/channel`);
   } else {
     const meta = await resolveChannelMeta(token, arg);
     channels = [{ id: arg, guildId: meta.guildId }];
@@ -957,7 +990,11 @@ export async function routeBackfill(log: Log, token: string, args: string[]) {
   let grand = 0;
   for (const ch of channels) {
     try {
-      const n = await backfillChannel(log, token, ch.id, ch.name || ch.id, store, lastSeen, stateFile, max, fresh, arg !== "all", ch.guildId, newest);
+      // incremental: forward from the archive's high-watermark; a channel with
+      // no rows yet has no watermark → newest-style backward walk seeds it.
+      const n = incremental && store.maxId(ch.id)
+        ? await backfillChannelIncremental(log, token, ch.id, ch.name || ch.id, store, max, arg !== "all", ch.guildId)
+        : await backfillChannel(log, token, ch.id, ch.name || ch.id, store, lastSeen, stateFile, max, fresh, arg !== "all", ch.guildId, newest || incremental);
       grand += n;
       log(`  ✓ ${ch.name || ch.id}: ${n} fetched`);
     } catch (e) {
