@@ -1,0 +1,16 @@
+[package]
+name = "backfill-tauri"
+version = "1.0.0"
+description = "Backfill Tauri — native shell over the Discord-archive control panel (Bifröst pattern)"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+ureq = { version = "2", features = ["json"] }
+
+[profile.release]
+strip = true
+lto = true
