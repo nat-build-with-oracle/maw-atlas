@@ -41,6 +41,7 @@ async function refreshNames(): Promise<void> {
 // ── one job at a time (sweep or per-channel backfill) ──
 type Job = { title: string; startedAt: string; lines: string[]; done: boolean; code: number | null };
 let job: Job | null = null;
+let jobChild: ReturnType<typeof spawn> | null = null;   // live worker, killed on shutdown
 function startJob(title: string, argv: string[]): boolean {
   if (job && !job.done) return false;
   const j: Job = { title, startedAt: new Date().toISOString(), lines: [], done: false, code: null };
@@ -49,13 +50,35 @@ function startJob(title: string, argv: string[]): boolean {
     cwd: MAW_ATLAS,
     env: { ...process.env, ATLAS_ROUTE_DB: DB_PATH },
   });
+  jobChild = child;
   const push = (buf: any) => {
     for (const l of String(buf).split("\n")) if (l.trim()) { j.lines.push(l); if (j.lines.length > 500) j.lines.shift(); }
   };
   child.stdout.on("data", push);
   child.stderr.on("data", push);
-  child.on("close", code => { j.done = true; j.code = code; j.lines.push(`— จบ (exit ${code}) —`); });
+  child.on("close", code => {
+    if (jobChild === child) jobChild = null;
+    j.done = true; j.code = code; j.lines.push(`— จบ (exit ${code}) —`);
+  });
   return true;
+}
+
+// ── clean shutdown: never orphan a running job worker ──
+function shutdown(code = 0): never {
+  if (jobChild && jobChild.exitCode === null) { try { jobChild.kill("SIGTERM"); } catch {} }
+  process.exit(code);
+}
+process.on("SIGTERM", () => shutdown(0));
+process.on("SIGINT", () => shutdown(0));
+
+// ── spawned-by-app watchdog: if the mac app dies without sending SIGTERM
+// (crash / Force Quit), exit instead of squatting on the port forever ──
+if (process.env.BACKFILL_SPAWNED_BY_APP) {
+  const parentPid = process.ppid;
+  setInterval(() => {
+    try { process.kill(parentPid, 0); }                 // signal 0 = liveness probe
+    catch { console.log("parent app gone — shutting down"); shutdown(0); }
+  }, 2000);
 }
 
 function db(): Database { return new Database(DB_PATH, { readonly: true }); }
