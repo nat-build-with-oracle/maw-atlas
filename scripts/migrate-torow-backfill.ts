@@ -36,7 +36,7 @@ if (apply) {
 const token = getToken();
 if (!token) { console.error("no DISCORD_BOT_TOKEN / pass token"); process.exit(1); }
 
-const db = new Database(dbPath, { readonly: !apply });
+const db = apply ? new Database(dbPath) : new Database(dbPath, { readonly: true });
 const BAD = "guild_id IS NULL AND thread_id = channel_id";
 
 const total = (db.query(`SELECT COUNT(*) c FROM discord_messages WHERE ${BAD}`).get() as any).c;
