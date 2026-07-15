@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ψ Vault Scanner — Oracle Markdown Ledger</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --line: #21262d; --fg: #e6edf3;
+    --dim: #8b949e; --accent: #58a6ff; --ok: #3fb950; --warn: #d29922; --bad: #f85149;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body { background: var(--bg); color: var(--fg);
+    font: 15px/1.6 -apple-system, "Sukhumvit Set", "Noto Sans Thai", sans-serif;
+    padding: 24px; max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 20px; margin-bottom: 4px; }
+  .sub { color: var(--dim); font-size: 13px; margin-bottom: 20px; }
+
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .tile  { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; }
+  .tile .v { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .tile .k { color: var(--dim); font-size: 12px; }
+
+  .bar { display: flex; gap: 10px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
+  button { background: var(--accent); color: #04121f; border: 0; border-radius: 8px;
+    padding: 8px 16px; font: inherit; font-weight: 600; cursor: pointer; }
+  button.ghost { background: transparent; color: var(--accent); border: 1px solid var(--line); }
+  button:disabled { opacity: .45; cursor: default; }
+  input[type=search], select { background: var(--panel); color: var(--fg); border: 1px solid var(--line);
+    border-radius: 8px; padding: 8px 12px; font: inherit; }
+  input[type=search] { flex: 1; min-width: 180px; }
+  select { max-width: 240px; }
+
+  #log { background: #010409; border: 1px solid var(--line); border-radius: 10px;
+    padding: 12px 16px; font: 12px/1.7 ui-monospace, monospace; white-space: pre-wrap;
+    max-height: 260px; overflow-y: auto; display: none; margin-bottom: 20px; }
+  #log.on { display: block; }
+
+  .tablewrap { overflow-x: auto; border-radius: 10px; }
+  table { width: 100%; border-collapse: collapse; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--line); font-size: 13px; }
+  th { color: var(--dim); font-weight: 600; background: #10151c; position: sticky; top: 0; }
+  td.n { text-align: right; font-variant-numeric: tabular-nums; }
+  tr:hover td { background: #1c2129; }
+  .name { font-weight: 600; }
+  .dim { color: var(--dim); }
+  .mono { font: 12px/1.5 ui-monospace, monospace; }
+  .act { display: flex; gap: 6px; }
+  .act button { padding: 3px 10px; font-size: 12px; }
+
+  .vault { color: var(--accent); font-size: 10px; border: 1px solid var(--line);
+    border-radius: 4px; padding: 0 5px; white-space: nowrap; }
+  .hit { color: var(--ok); font-size: 10px; border: 1px solid var(--ok);
+    border-radius: 4px; padding: 0 4px; margin-left: 6px; }
+
+  #view { margin-top: 20px; display: none; }
+  #view.on { display: block; }
+  #view .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+  #view h2 { font-size: 16px; margin-bottom: 2px; }
+  #view .path { color: var(--dim); font-size: 12px; margin-bottom: 12px; word-break: break-all; }
+  #view .body { background: #010409; border: 1px solid var(--line); border-radius: 8px;
+    padding: 12px 16px; font: 13px/1.7 ui-monospace, monospace; white-space: pre-wrap;
+    word-break: break-word; max-height: 480px; overflow-y: auto; }
+  #view .top { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+</style>
+</head>
+<body>
+  <h1>ψ📜 Vault Scanner — Oracle Markdown Ledger</h1>
+  <div class="sub">vault census panel · atlas-discord-backfill-oracle · สแกน ψ ทุก vault บนเครื่องนี้ แล้วไล่ดู markdown ของ Oracle ได้เลย</div>
+
+  <div class="tiles">
+    <div class="tile"><div class="v" id="t-total">…</div><div class="k">ไฟล์ทั้งหมด</div></div>
+    <div class="tile"><div class="v" id="t-oracle">…</div><div class="k">เกี่ยวกับ oracle</div></div>
+    <div class="tile"><div class="v" id="t-vaults">…</div><div class="k">vaults</div></div>
+    <div class="tile"><div class="v" id="t-scan">…</div><div class="k">สแกนล่าสุด</div></div>
+  </div>
+
+  <div class="bar">
+    <button id="b-scan">🔍 สแกนใหม่ (ทุก vault)</button>
+    <button class="ghost" id="b-mode">👁 เฉพาะ oracle ✓</button>
+    <button class="ghost" id="b-refresh">↻ รีเฟรช</button>
+    <span class="dim" id="jobstate"></span>
+  </div>
+
+  <div class="bar">
+    <input type="search" id="q" placeholder="ค้นหา (FTS: title + เนื้อหา)…">
+    <select id="vault"><option value="">ทุก vault</option></select>
+  </div>
+
+  <div id="log"></div>
+
+  <div class="tablewrap">
+    <table>
+      <thead><tr>
+        <th class="n">#</th><th>ชื่อเรื่อง</th><th>vault</th><th>path</th>
+        <th class="n">ขนาด</th><th>ล่าสุด</th><th></th>
+      </tr></thead>
+      <tbody id="rows"><tr><td colspan="7" class="dim">…</td></tr></tbody>
+    </table>
+  </div>
+
+  <div id="view">
+    <div class="panel">
+      <div class="top">
+        <div><h2 id="v-title"></h2><div class="path" id="v-path"></div></div>
+        <button class="ghost" onclick="$('view').classList.remove('on')">✕ ปิด</button>
+      </div>
+      <div class="body" id="v-body"></div>
+    </div>
+  </div>
+
+<script>
+const $ = id => document.getElementById(id);
+const fmtN = n => (n || 0).toLocaleString("en-US");
+const fmtT = ms => ms ? new Date(ms).toLocaleString("en-GB",
+  { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" }).replace(",", "") : "—";
+const fmtB = b => b >= 1048576 ? (b / 1048576).toFixed(1) + " MB" : b >= 1024 ? (b / 1024).toFixed(1) + " KB" : b + " B";
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+let oracleOnly = true;   // default view = oracle_hit files newest-first
+let ROWS = [];
+
+async function post(url, body) {
+  const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined });
+  if (r.status === 409) { alert("มี job กำลังรันอยู่ รอให้จบก่อนครับ"); return false; }
+  return r.ok;
+}
+
+async function loadStats() {
+  const s = await fetch("/api/stats").then(r => r.json());
+  $("t-total").textContent = fmtN(s.total);
+  $("t-oracle").textContent = fmtN(s.oracle);
+  $("t-vaults").textContent = fmtN(s.vaults);
+  $("t-scan").textContent = s.lastScan
+    ? new Date(s.lastScan).toLocaleString("th-TH", { dateStyle: "short", timeStyle: "short" }) : "ยังไม่เคย";
+  const cur = $("vault").value;
+  $("vault").innerHTML = '<option value="">ทุก vault</option>' +
+    s.perVault.map(v => `<option value="${esc(v.vault)}">${esc(v.vault)} (${fmtN(v.files)})</option>`).join("");
+  $("vault").value = cur;
+}
+
+async function loadFiles() {
+  const q = $("q").value.trim();
+  const params = new URLSearchParams({ limit: "200" });
+  if (q) params.set("q", q);
+  if ($("vault").value) params.set("vault", $("vault").value);
+  if (oracleOnly) params.set("oracle", "1");
+  const r = await fetch("/api/files?" + params).then(r => r.json());
+  ROWS = r.files || [];
+  if (!ROWS.length) {
+    $("rows").innerHTML = '<tr><td colspan="7" class="dim">ไม่พบไฟล์ — ลองกด 🔍 สแกนใหม่ หรือเปลี่ยนเงื่อนไข</td></tr>';
+    return;
+  }
+  $("rows").innerHTML = ROWS.map((f, i) => `
+    <tr>
+      <td class="n dim">${i + 1}</td>
+      <td class="name">${esc(f.title)}${f.oracle_hit ? '<span class="hit">oracle</span>' : ""}</td>
+      <td><span class="vault">${esc(f.vault)}</span></td>
+      <td class="dim mono" title="${esc(f.rel_path)}">${esc(f.rel_path.length > 48 ? "…" + f.rel_path.slice(-47) : f.rel_path)}</td>
+      <td class="n">${fmtB(f.bytes)}</td>
+      <td class="dim">${fmtT(f.mtime)}</td>
+      <td><div class="act">
+        <button class="ghost" onclick="view(${i})">👁 ดู</button>
+        <button class="ghost" onclick="openFile(${i})">📂 เปิด</button>
+      </div></td>
+    </tr>`).join("");
+}
+
+async function view(i) {
+  const f = ROWS[i];
+  if (!f) return;
+  const r = await fetch("/api/preview?path=" + encodeURIComponent(f.path));
+  const text = r.ok ? await r.text() : "(อ่านไฟล์ไม่ได้)";
+  // markdown is untrusted vault content → plain text via textContent, never innerHTML
+  $("v-title").textContent = f.title;
+  $("v-path").textContent = f.path;
+  $("v-body").textContent = text;
+  $("view").classList.add("on");
+  $("view").scrollIntoView({ behavior: "smooth" });
+}
+
+async function openFile(i) {
+  const f = ROWS[i];
+  if (f) await post("/api/open", { path: f.path });
+}
+
+let polling = null;
+function watchJob() {
+  if (polling) return;
+  $("log").classList.add("on");
+  polling = setInterval(async () => {
+    const j = await fetch("/api/job").then(r => r.json());
+    $("jobstate").textContent = j.title ? `${j.done ? "✓" : "⏳"} ${j.title}` : "";
+    $("log").textContent = (j.lines || []).join("\n");
+    $("log").scrollTop = $("log").scrollHeight;
+    $("b-scan").disabled = !j.done;
+    if (j.done) { clearInterval(polling); polling = null; loadStats(); loadFiles(); }
+  }, 1000);
+}
+
+$("b-scan").onclick = async () => { if (await post("/api/scan")) watchJob(); };
+$("b-refresh").onclick = () => { loadStats(); loadFiles(); };
+$("b-mode").onclick = () => {
+  oracleOnly = !oracleOnly;
+  $("b-mode").textContent = oracleOnly ? "👁 เฉพาะ oracle ✓" : "👁 ทั้งหมด";
+  loadFiles();
+};
+$("vault").onchange = () => loadFiles();
+
+let deb = null;
+$("q").oninput = () => { clearTimeout(deb); deb = setTimeout(loadFiles, 300); };  // FTS round-trip debounced 300ms
+
+(async () => {
+  await loadStats();
+  await loadFiles();
+  // resume watching if a scan is already running
+  const j = await fetch("/api/job").then(r => r.json());
+  if (j && !j.done) watchJob();
+})();
+</script>
+</body>
+</html>
