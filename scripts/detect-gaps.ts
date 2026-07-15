@@ -75,14 +75,8 @@ for (const ch of archived) {
   const label = live?.name || ch.id;
   const oldestKey = `${ch.id}:oldest`;
 
-  // cursor mismatch: cursor older than our oldest row ⇒ hole between them
-  const cur = cursors[oldestKey];
-  if (cur && BigInt(cur) < BigInt(ch.min_id)) {
-    gaps.push({ kind: "cursor", channelId: ch.id, name: live?.name || null, guild: live?.guild || null, rows: ch.n,
-      detail: `cursor ${snowflakeToIso(cur).slice(0, 10)} เก่ากว่า row แรกที่มี ${snowflakeToIso(ch.min_id).slice(0, 10)} — มี hole ระหว่างกลาง` });
-  }
-
-  // bottom probe (skip channels Discord no longer knows — they 404)
+  // bottom probe first (a 404/403 here means cursor holes aren't fixable either)
+  let gone = false;
   try {
     const page = await request(`/channels/${ch.id}/messages?limit=100&before=${ch.min_id}`, token!);
     probed++;
@@ -93,11 +87,20 @@ for (const ch of archived) {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (msg.includes(" 404 ") || msg.includes(" 403 ")) {
+      gone = true;
       gaps.push({ kind: "deleted", channelId: ch.id, name: live?.name || null, guild: live?.guild || null, rows: ch.n,
         detail: `Discord ${msg.includes(" 404 ") ? "404" : "403"} — channel หาย/หมดสิทธิ์ (เก็บ ${ch.n} rows ไว้ตามเดิม)` });
     } else {
       console.log(`  ! probe ${label}: ${msg}`);
     }
+  }
+
+  // cursor mismatch: cursor older than our oldest row ⇒ hole between them
+  // (skip if the channel is gone — those messages died with it)
+  const cur = cursors[oldestKey];
+  if (!gone && cur && BigInt(cur) < BigInt(ch.min_id)) {
+    gaps.push({ kind: "cursor", channelId: ch.id, name: live?.name || null, guild: live?.guild || null, rows: ch.n,
+      detail: `cursor ${snowflakeToIso(cur).slice(0, 10)} เก่ากว่า row แรกที่มี ${snowflakeToIso(ch.min_id).slice(0, 10)} — มี hole ระหว่างกลาง` });
   }
   await pause();
 }
