@@ -44,6 +44,9 @@ try { cursors = JSON.parse(readFileSync(STATE_PATH, "utf8")); } catch {}
 
 type Gap = { kind: "zero-row" | "bottom" | "cursor" | "deleted"; channelId: string; name: string | null; guild: string | null; rows: number; detail: string };
 const gaps: Gap[] = [];
+// 401/403 = credential/permission signal — heimdall (Bifröst, token-health ledger
+// of record) wants these as events; 404 = channel gone, archive-domain only.
+const authFailures: Array<{ channelId: string; name: string | null; status: number }> = [];
 
 // ── live channel list (bot's view of Discord truth) ──
 console.log("loading live guild/channel list…");
@@ -86,11 +89,14 @@ for (const ch of archived) {
     }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
+    if (msg.includes(" 401 ") || msg.includes(" 403 ")) {
+      authFailures.push({ channelId: ch.id, name: live?.name || null, status: msg.includes(" 401 ") ? 401 : 403 });
+    }
     if (msg.includes(" 404 ") || msg.includes(" 403 ")) {
       gone = true;
       gaps.push({ kind: "deleted", channelId: ch.id, name: live?.name || null, guild: live?.guild || null, rows: ch.n,
         detail: `Discord ${msg.includes(" 404 ") ? "404" : "403"} — channel หาย/หมดสิทธิ์ (เก็บ ${ch.n} rows ไว้ตามเดิม)` });
-    } else {
+    } else if (!msg.includes(" 401 ")) {
       console.log(`  ! probe ${label}: ${msg}`);
     }
   }
@@ -115,8 +121,9 @@ for (const g of gaps) {
 const fixable = gaps.filter(g => g.kind !== "deleted");
 console.log(`\n${fixable.length} แก้ได้ด้วย route backfill <channelId> --full · ${gaps.length - fixable.length} เป็น channel ที่หายไปแล้ว`);
 
+if (authFailures.length) console.log(`⚠ auth failures (401/403): ${authFailures.map(a => `${a.name || a.channelId}:${a.status}`).join(", ")}`);
 if (JSON_OUT) {
-  writeFileSync(JSON_OUT, JSON.stringify({ at: new Date().toISOString(), probed, gaps }, null, 1));
+  writeFileSync(JSON_OUT, JSON.stringify({ at: new Date().toISOString(), probed, gaps, authFailures }, null, 1));
   console.log(`json → ${JSON_OUT}`);
 }
 db.close();
