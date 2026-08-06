@@ -30,7 +30,7 @@ export const command = {
 
 const COMMANDS = `
   ls                          list guilds + channels
-  read <channel> [--limit=N]  read channel messages
+  read <channel> [N] [--all] [--since D] [--before D] [--format json]  read channel messages
   backfill [--guild=x] [--all] backfill all channels
   serve [--port=N] [--build]  start PARLIAMENT (auto-build UI)
   transcribe <audio> [-o OUT] audio → timestamped transcript (Typhoon/Groq STT)
@@ -75,9 +75,12 @@ export default async function handler(ctx: InvokeContext): Promise<InvokeResult>
   if (sub === "--tree" || sub === "tree") {
     log("maw atlas");
     log("├── ls                          list guilds + channels");
-    log("├── read <channel>              read channel messages");
-    log("│   ├── --limit=N               message count (default 20)");
-    log("│   └── --plain                 human-readable (default JSON)");
+    log("├── read <channel> [N]          read channel messages");
+    log("│   ├── --limit=N               message count (default 5)");
+    log("│   ├── --all                   read full channel/thread history");
+    log("│   ├── --since YYYY-MM-DD      include messages from this date/time");
+    log("│   ├── --before YYYY-MM-DD     include messages before this date/time");
+    log("│   └── --json|--format json    raw Discord JSON output");
     log("├── threads                     list active threads (JSON)");
     log("│   ├── create <ch> <name>      create new thread");
     log("│   └── --plain                 human-readable");
