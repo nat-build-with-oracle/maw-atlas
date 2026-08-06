@@ -64,6 +64,14 @@ export async function getGuildChannels(token: string, guildId: string) {
   return request(`/guilds/${guildId}/channels`, token);
 }
 
+export async function getGuild(token: string, guildId: string) {
+  return request(`/guilds/${guildId}`, token);
+}
+
+export async function updateGuild(token: string, guildId: string, data: any) {
+  return request(`/guilds/${guildId}`, token, "PATCH", data);
+}
+
 // ── Channels ──
 
 export async function getChannel(token: string, channelId: string) {

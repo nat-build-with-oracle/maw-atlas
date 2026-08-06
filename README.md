@@ -14,6 +14,9 @@ maw atlas read <channel-id>          # read messages
 maw atlas backfill [--all]           # backfill message history
 maw atlas add-guild <invite-or-id>   # discover guild channels
 maw atlas whoami                     # bot identity
+maw atlas guild icon                 # show current guild icon URL
+maw atlas guild icon set ./icon.png  # set guild icon
+maw atlas guild icon --remove        # remove guild icon
 maw atlas check                      # consolidation check
 maw atlas wake <bot>                 # remote bot wake
 maw atlas vesicle <bot>              # tmux transport demo
