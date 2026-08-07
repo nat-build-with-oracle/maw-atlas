@@ -10,7 +10,8 @@ maw plugin install nat-build-with-oracle/maw-atlas
 
 ```
 maw atlas ls                          # list guilds + channels
-maw atlas read <channel-id>          # read messages
+maw atlas read <channel-id> 50 --format json   # read as raw Discord JSON
+maw atlas read <channel-id> --all --since 2026-08-01 --before 2026-08-06
 maw atlas backfill [--all]           # backfill message history
 maw atlas add-guild <invite-or-id>   # discover guild channels
 maw atlas whoami                     # bot identity
