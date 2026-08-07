@@ -1,7 +1,10 @@
 import { getGuild, listGuilds, toDataUri, updateGuild } from "../lib/discord";
 
 async function resolveGuild(log: (s: string) => void, token: string, args: string[]) {
-  const guildArg = args.find(a => a.startsWith("--guild="))?.split("=")[1];
+  // Slice past the prefix rather than split("=")[1] — a guild name containing
+  // its own "=" (e.g. --guild=Foo=Bar) would otherwise silently truncate to "Foo".
+  const guildFlag = args.find(a => a.startsWith("--guild="));
+  const guildArg = guildFlag ? guildFlag.slice("--guild=".length) : undefined;
   const guilds = await listGuilds(token);
   if (!Array.isArray(guilds) || guilds.length === 0) {
     log("✗ no guilds available");
@@ -32,9 +35,15 @@ function guildIconUrl(guildId: string, iconHash?: string | null) {
 }
 
 export async function guild(log: (s: string) => void, token: string, args: string[]) {
-  const sub = args[1];
-  const area = args[2];
-  const iconSub = args[3];
+  // Flags (--guild=X, --remove) can appear anywhere in the invocation, e.g.
+  // `guild icon --guild=X set ./icon.png`. Indexing raw args[1]/[2]/[3]
+  // shifts every subsequent slot when a flag lands before the subcommand —
+  // `set` would land in the flag's slot and silently never run. Strip flags
+  // out first so sub/area/iconSub always line up with the real positionals.
+  const positional = args.filter(a => !a.startsWith("--"));
+  const sub = positional[1];
+  const area = positional[2];
+  const iconSub = positional[3];
 
   if (sub !== "icon") {
     log("usage:");
@@ -47,9 +56,9 @@ export async function guild(log: (s: string) => void, token: string, args: strin
   const selectedGuild = await resolveGuild(log, token, args);
   if (!selectedGuild) return;
 
-  const wantsRemove = area === "--remove" || iconSub === "--remove" || args.includes("--remove");
+  const wantsRemove = args.includes("--remove");
   if (area === "set") {
-    const filePath = args[3];
+    const filePath = iconSub;
     if (!filePath || filePath.startsWith("--")) {
       log("usage: maw atlas guild icon set <path-to-image> [--guild=<id|exact-name>]");
       return;
