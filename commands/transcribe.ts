@@ -1,4 +1,14 @@
 import { findAtlasRepo } from "../lib/repo";
+import type { CommandMeta } from "../lib/command-types";
+
+export const meta: CommandMeta = {
+  name: "transcribe",
+  help: [
+    "transcribe <audio> [-o OUT] audio → timestamped transcript (Typhoon/Groq STT)",
+    "transcribe --compare A B    side-by-side STT engine diff",
+  ].join("\n"),
+  tokenRequirement: "none",
+};
 
 /**
  * maw atlas transcribe — audio → timestamped transcript via Typhoon/Groq STT.
@@ -15,7 +25,7 @@ import { findAtlasRepo } from "../lib/repo";
  *   ~/.config/typhoon/.env   TYPHOON_API_KEY=sk-...
  *   ~/.config/groq/.env      GROQ_API_KEY=gsk_...
  */
-export async function transcribe(log: (s: string) => void, args: string[]) {
+export async function transcribe(log: (s: string) => void, _token: string, args: string[]) {
   const { execSync } = require("child_process");
   const { existsSync } = require("fs");
 
@@ -69,3 +79,5 @@ export async function transcribe(log: (s: string) => void, args: string[]) {
     log(`transcribe exited: ${e.message || e}`);
   }
 }
+
+export { transcribe as run };

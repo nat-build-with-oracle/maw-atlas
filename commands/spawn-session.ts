@@ -7,6 +7,14 @@
  *   3. maw atlas route start
  */
 
+import type { CommandMeta } from "../lib/command-types";
+
+export const meta: CommandMeta = {
+  name: "spawn-session",
+  help: "spawn-session <charter>      team up + threads sync + route start",
+  tokenRequirement: "optional",
+};
+
 type Log = (s: string) => void;
 
 type Step = {
@@ -88,7 +96,7 @@ function usage(log: Log) {
   log("  maw atlas route start");
 }
 
-export async function spawnSession(log: Log, args: string[]) {
+export async function spawnSession(log: Log, _token: string, args: string[]) {
   const charter = args[1];
   if (!charter || charter === "help" || charter === "-h" || charter === "--help") {
     usage(log);
@@ -110,3 +118,5 @@ export async function spawnSession(log: Log, args: string[]) {
   log("✓ spawn-session complete");
   await notify(notifyTarget, `[m5:atlas] spawn-session complete: ${charter}`, dryRun, log);
 }
+
+export { spawnSession as run };

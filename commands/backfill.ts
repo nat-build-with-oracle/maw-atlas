@@ -13,6 +13,17 @@
 import { findAtlasRepo } from "../lib/repo";
 import { listGuilds, getGuildChannels, getMessages, filterTextChannels } from "../lib/discord";
 import { writeFileSync, mkdirSync, existsSync } from "fs";
+import type { CommandMeta } from "../lib/command-types";
+
+export const meta: CommandMeta = {
+  name: "backfill",
+  help: "backfill [--guild=x] [--all] backfill all channels",
+  treeLines: [
+    "backfill                    backfill all channels",
+    "--guild=<name>          specific guild",
+    "--all                   all guilds",
+  ],
+};
 import { join } from "path";
 
 const DISCORD_EPOCH = 1420070400000n;
@@ -139,3 +150,5 @@ export async function backfill(log: (s: string) => void, token: string, args: st
     log(`  total: ${guildTotal} msgs`);
   }
 }
+
+export { backfill as run };

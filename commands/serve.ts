@@ -1,6 +1,18 @@
 import { findAtlasRepo } from "../lib/repo";
+import type { CommandMeta } from "../lib/command-types";
 
-export async function serve(log: (s: string) => void, args: string[]) {
+export const meta: CommandMeta = {
+  name: "serve",
+  help: "serve [--port=N] [--build]  start PARLIAMENT (auto-build UI)",
+  treeLines: [
+    "serve                       start PARLIAMENT dashboard",
+    "--port=N                port (default 4567)",
+    "--build                 auto-build UI first",
+  ],
+  tokenRequirement: "none",
+};
+
+export async function serve(log: (s: string) => void, _token: string, args: string[]) {
   const repo = findAtlasRepo();
   if (!repo) { log("✗ atlas-oracle repo not found (need parliament/api/server.ts)"); return; }
 
@@ -40,3 +52,5 @@ export async function serve(log: (s: string) => void, args: string[]) {
     log(`server exited: ${e.message || e}`);
   }
 }
+
+export { serve as run };

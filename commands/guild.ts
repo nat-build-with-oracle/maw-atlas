@@ -1,4 +1,20 @@
 import { getGuild, listGuilds, toDataUri, updateGuild } from "../lib/discord";
+import type { CommandMeta } from "../lib/command-types";
+
+export const meta: CommandMeta = {
+  name: "guild",
+  help: [
+    "guild icon                   show current guild icon URL",
+    "guild icon set <image-path>  set guild icon (PNG/JPG/GIF/WebP)",
+    "guild icon --remove          remove guild icon",
+  ].join("\n"),
+  treeLines: [
+    "guild icon                  show current guild icon",
+    "set <image-path>       set guild icon",
+    "--remove               remove guild icon",
+    "--guild=<id|name>      choose target guild",
+  ],
+};
 
 async function resolveGuild(log: (s: string) => void, token: string, args: string[]) {
   // Slice past the prefix rather than split("=")[1] — a guild name containing
@@ -92,3 +108,5 @@ export async function guild(log: (s: string) => void, token: string, args: strin
   log("  maw atlas guild icon set <path-to-image> [--guild=<id|exact-name>]");
   log("  maw atlas guild icon --remove [--guild=<id|exact-name>]");
 }
+
+export { guild as run };

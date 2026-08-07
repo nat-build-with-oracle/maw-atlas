@@ -11,6 +11,13 @@ import { execFile } from "child_process";
 import { getChannel, getGuildChannels, getMessages, listGuilds, postMessage } from "../lib/discord";
 import { findAtlasRepo } from "../lib/repo";
 import * as watchGuards from "../lib/watch-guards";
+import type { CommandMeta } from "../lib/command-types";
+
+export const meta: CommandMeta = {
+  name: "watch",
+  help: "watch <channel>              auto-spawn codex workers from new threads",
+  tokenRequirement: "optional",
+};
 
 type Log = (s: string) => void;
 
@@ -404,3 +411,5 @@ export async function watch(log: Log, token: string, args: string[]) {
     await sleep(intArg(args, "--interval", DEFAULT_INTERVAL_MS));
   }
 }
+
+export { watch as run };

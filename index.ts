@@ -1,159 +1,122 @@
 /**
  * maw atlas — Discord fleet infrastructure plugin.
  *
- * Thin dispatcher — each command lives in commands/<name>.ts,
- * Discord API methods in lib/discord.ts.
+ * Thin dispatcher — autoloads commands/*.ts. Each command file exports
+ * `meta` (name, help, tokenRequirement — see lib/command-types.ts) and
+ * `run(log, token, args)`. Adding a command is just adding a file; nothing
+ * in this file needs to change.
  */
+import { Glob } from "bun";
 import type { InvokeContext, InvokeResult } from "maw-js/plugin/types";
 import { getToken } from "./lib/discord";
-import { whoami } from "./commands/whoami";
-import { ls } from "./commands/ls";
-import { read } from "./commands/read";
-import { addGuild } from "./commands/add-guild";
-import { serve } from "./commands/serve";
-import { inbox } from "./commands/inbox";
-import { backfill } from "./commands/backfill";
-import { threads } from "./commands/threads";
-import { slash } from "./commands/slash";
-import { avatar } from "./commands/avatar";
-import { app } from "./commands/app";
-import { teamThreads } from "./commands/team-threads";
-import { spawnSession } from "./commands/spawn-session";
-import { route } from "./commands/route";
-import { watch } from "./commands/watch";
-import { transcribe } from "./commands/transcribe";
-import { guild } from "./commands/guild";
+import type { CommandMeta, CommandRun, Log } from "./lib/command-types";
 
 export const command = {
   name: "atlas",
   description: "Discord fleet infrastructure — guilds, channels, bots, backfill.",
 };
 
-const COMMANDS = `
-  ls                          list guilds + channels
-  read <channel> [N] [--all] [--since D] [--before D] [--format json]  read channel messages
-  backfill [--guild=x] [--all] backfill all channels
-  serve [--port=N] [--build]  start PARLIAMENT (auto-build UI)
-  transcribe <audio> [-o OUT] audio → timestamped transcript (Typhoon/Groq STT)
-  transcribe --compare A B    side-by-side STT engine diff
-  check                       consolidation invariant
-  wake <bot> [host]           anchor-aware remote wake
-  vesicle <bot> [n] [delay]   tmux pane transport
-  add-guild <invite-or-id>    discover guild channels
-  threads [--json]             list active threads across guilds
-  threads create <ch> <name>  create empty thread
-  threads open <ch> <name>    create thread with starter msg + join
-  threads delete <name-or-id> delete thread
-  threads archive <name>      archive thread
-  threads join <name>         bot joins thread
-  threads add <thread> <uid>  add user to thread
-  slash list [--json]          list registered slash commands
-  slash register <name|--all>  register slash command
-  slash remove <name-or-id>    remove slash command
-  avatar                       show current bot avatar
-  avatar set <image-path>      set bot avatar (PNG/JPG/GIF/WebP)
-  guild icon                   show current guild icon URL
-  guild icon set <image-path>  set guild icon (PNG/JPG/GIF/WebP)
-  guild icon --remove          remove guild icon
-  app                          show app settings
-  app interactions <url>       set Interactions Endpoint URL
-  app interactions --clear     remove Interactions Endpoint URL
-  team-threads sync [channel]  create threads for worktree agents
-  team-threads list [channel]  list agent threads
-  route [start|status|once]    bridge Discord threads to codex panes
-  watch <channel>              auto-spawn codex workers from new threads
-  spawn-session <charter>      team up + threads sync + route start
-  inbox [--all] [--from=x]    read unread inbox messages
-  whoami                      bot identity check
-`.trim();
+interface CommandModule {
+  meta: CommandMeta;
+  run: CommandRun;
+}
+
+let registryCache: CommandModule[] | null = null;
+
+async function loadCommands(): Promise<CommandModule[]> {
+  if (registryCache) return registryCache;
+
+  const files: string[] = [];
+  const glob = new Glob("*.ts");
+  for await (const file of glob.scan({ cwd: `${import.meta.dir}/commands` })) files.push(file);
+  files.sort();
+
+  const modules: CommandModule[] = [];
+  for (const file of files) {
+    const mod = await import(`./commands/${file}`);
+    if (!mod.meta?.name || typeof mod.run !== "function") {
+      throw new Error(`commands/${file}: must export both \`meta\` (with a name) and \`run\` — see lib/command-types.ts`);
+    }
+    modules.push({ meta: mod.meta, run: mod.run });
+  }
+  modules.sort((a, b) => a.meta.name.localeCompare(b.meta.name));
+  registryCache = modules;
+  return modules;
+}
 
 export default async function handler(ctx: InvokeContext): Promise<InvokeResult> {
   const out: string[] = [];
-  const log = (s: string) => (ctx.writer ? ctx.writer(s) : out.push(s));
+  const log: Log = (s) => (ctx.writer ? ctx.writer(s) : out.push(s));
   const done = (ok: boolean, exitCode = ok ? 0 : 1): InvokeResult =>
     ({ ok, output: ctx.writer ? "" : out.join("\n"), error: ok ? undefined : "", exitCode });
 
   const args = ctx.source === "cli" ? (ctx.args as string[]) : [];
   const sub = args[0]?.toLowerCase();
 
+  const commands = await loadCommands();
+
   if (sub === "--tree" || sub === "tree") {
     log("maw atlas");
-    log("├── ls                          list guilds + channels");
-    log("├── read <channel> [N]          read channel messages");
-    log("│   ├── --limit=N               message count (default 5)");
-    log("│   ├── --all                   read full channel/thread history");
-    log("│   ├── --since YYYY-MM-DD      include messages from this date/time");
-    log("│   ├── --before YYYY-MM-DD     include messages before this date/time");
-    log("│   └── --json|--format json    raw Discord JSON output");
-    log("├── threads                     list active threads (JSON)");
-    log("│   ├── create <ch> <name>      create new thread");
-    log("│   └── --plain                 human-readable");
-    log("├── backfill                    backfill all channels");
-    log("│   ├── --guild=<name>          specific guild");
-    log("│   └── --all                   all guilds");
-    log("├── serve                       start PARLIAMENT dashboard");
-    log("│   ├── --port=N                port (default 4567)");
-    log("│   └── --build                 auto-build UI first");
-    log("├── check                       consolidation invariant");
-    log("├── wake <bot> [host]           anchor-aware remote wake");
-    log("├── vesicle <bot> [n] [delay]   tmux pane transport");
-    log("├── add-guild <invite-or-id>    discover guild channels");
-    log("├── route                       bridge Discord threads to codex panes");
-    log("├── watch <channel>             auto-spawn codex workers from new threads");
-    log("├── spawn-session <charter>     team up + threads sync + route start");
-    log("├── inbox                       read unread inbox messages");
-    log("│   ├── --all                   include read messages");
-    log("│   └── --from=<oracle>         filter by sender");
-    log("├── whoami                      bot identity check");
-    log("├── guild icon                  show current guild icon");
-    log("│   ├── set <image-path>       set guild icon");
-    log("│   ├── --remove               remove guild icon");
-    log("│   └── --guild=<id|name>      choose target guild");
-    log("└── --tree                      this command tree");
+    commands.forEach((mod, i) => {
+      const isLast = i === commands.length - 1;
+      const prefix = isLast ? "└── " : "├── ";
+      const cont = isLast ? "    " : "│   ";
+      const lines = mod.meta.treeLines ?? mod.meta.help.split("\n");
+      log(`${prefix}${lines[0]}`);
+      for (let j = 1; j < lines.length; j++) {
+        const lineIsLast = j === lines.length - 1;
+        log(`${cont}${lineIsLast ? "└── " : "├── "}${lines[j]}`);
+      }
+    });
     return done(true);
   }
 
   if (!sub || sub === "help" || sub === "-h" || sub === "--help") {
     log("maw atlas — Discord fleet infrastructure");
     log("");
-    for (const line of COMMANDS.split("\n")) log(`  ${line.trim()}`);
+    for (const mod of commands) {
+      for (const line of mod.meta.help.split("\n")) log(`  ${line}`);
+    }
     return done(true);
   }
 
-  // serve + inbox + transcribe don't need token
-  if (sub === "serve") { await serve(log, args); return done(true); }
-  if (sub === "inbox") { await inbox(log, args); return done(true); }
-  if (sub === "transcribe") { await transcribe(log, args); return done(true); }
-
-  const token = getToken();
-  if (!token && !["check", "wake", "vesicle", "route", "watch", "spawn-session"].includes(sub)) {
-    log("✗ no DISCORD_BOT_TOKEN — set env or `pass insert discord/atlas-oracle-token`");
+  const mod = commands.find(m => m.meta.name === sub);
+  if (!mod) {
+    log(`unknown: ${sub} — run 'maw atlas --help'`);
     return done(false);
   }
 
-  try {
-    switch (sub) {
-      case "whoami":    await whoami(log, token!); break;
-      case "ls":        await ls(log, token!); break;
-      case "read":      await read(log, token!, args); break;
-      case "add-guild": await addGuild(log, token!, args); break;
-      case "backfill":  await backfill(log, token!, args); break;
-      case "threads":   await threads(log, token!, args); break;
-      case "slash":     await slash(log, token!, args); break;
-      case "avatar":    await avatar(log, token!, args); break;
-      case "guild":     await guild(log, token!, args); break;
-      case "app":       await app(log, token!, args); break;
-      case "team-threads": await teamThreads(log, token!, args); break;
-      case "route":     await route(log, token || "", args); break;
-      case "watch":     await watch(log, token || "", args); break;
-      case "spawn-session": await spawnSession(log, args); break;
-      default:
-        log(`unknown: ${sub} — run 'maw atlas --help'`);
-        return done(false);
+  const requirement = mod.meta.tokenRequirement ?? "required";
+  let token = "";
+  if (requirement !== "none") {
+    token = getToken() ?? "";
+    if (!token && requirement === "required") {
+      log("✗ no DISCORD_BOT_TOKEN — set env or `pass insert discord/atlas-oracle-token`");
+      return done(false);
     }
+  }
+
+  try {
+    await mod.run(log, token, args);
     return done(true);
   } catch (e) {
     log(`error: ${e instanceof Error ? e.message : String(e)}`);
     return done(false);
   }
+}
+
+// ── bun-dev CLI shim — when run directly via `bun index.ts <args>` ──
+if (import.meta.main) {
+  const args = process.argv.slice(2);
+  const ctx = {
+    source: "cli" as const,
+    args,
+    writer: (...a: unknown[]) => console.log(String(a[0] ?? "")),
+  };
+  const result = await handler(ctx as any);
+  if (!result.ok) {
+    if (result.error) console.error(result.error);
+    process.exit(result.exitCode ?? 1);
+  }
+  if (result.output) console.log(result.output);
 }

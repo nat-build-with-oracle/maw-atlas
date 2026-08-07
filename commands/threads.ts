@@ -3,6 +3,25 @@ import {
   createThread, createThreadFromMessage, deleteThread,
   joinThread, addThreadMember, archiveThread,
 } from "../lib/discord";
+import type { CommandMeta } from "../lib/command-types";
+
+export const meta: CommandMeta = {
+  name: "threads",
+  help: [
+    "threads [--json]             list active threads across guilds",
+    "threads create <ch> <name>  create empty thread",
+    "threads open <ch> <name>    create thread with starter msg + join",
+    "threads delete <name-or-id> delete thread",
+    "threads archive <name>      archive thread",
+    "threads join <name>         bot joins thread",
+    "threads add <thread> <uid>  add user to thread",
+  ].join("\n"),
+  treeLines: [
+    "threads                     list active threads (JSON)",
+    "create <ch> <name>      create new thread",
+    "--plain                 human-readable",
+  ],
+};
 
 async function resolveChannel(token: string, input: string): Promise<string | null> {
   if (/^\d{17,20}$/.test(input)) return input;
@@ -150,3 +169,5 @@ export async function threads(log: (s: string) => void, token: string, args: str
     log("no active threads found");
   }
 }
+
+export { threads as run };

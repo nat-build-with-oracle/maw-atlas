@@ -1,4 +1,19 @@
 import { getMe, listGuilds, listSlashCommands, registerSlashCommands, deleteSlashCommand } from "../lib/discord";
+import type { CommandMeta } from "../lib/command-types";
+
+export const meta: CommandMeta = {
+  name: "slash",
+  help: [
+    "slash list [--json]          list registered slash commands",
+    "slash register <name|--all>  register slash command",
+    "slash remove <name-or-id>    remove slash command",
+  ].join("\n"),
+  treeLines: [
+    "slash list [--json]          list registered slash commands",
+    "register <name|--all>  register slash command",
+    "remove <name-or-id>    remove slash command",
+  ],
+};
 
 const BUILTIN_COMMANDS: Record<string, any> = {
   thread: {
@@ -127,3 +142,5 @@ export async function slash(log: (s: string) => void, token: string, args: strin
 
   log(`unknown: ${sub} — run 'maw atlas slash help'`);
 }
+
+export { slash as run };

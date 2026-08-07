@@ -1,4 +1,17 @@
 import { listGuilds, getGuildChannels, createThread } from "../lib/discord";
+import type { CommandMeta } from "../lib/command-types";
+
+export const meta: CommandMeta = {
+  name: "team-threads",
+  help: [
+    "team-threads sync [channel]  create threads for worktree agents",
+    "team-threads list [channel]  list agent threads",
+  ].join("\n"),
+  treeLines: [
+    "team-threads sync [channel]  create threads for worktree agents",
+    "list [channel]          list agent threads",
+  ],
+};
 
 async function resolveChannel(token: string, input: string): Promise<string | null> {
   if (/^\d{17,20}$/.test(input)) return input;
@@ -114,3 +127,5 @@ export async function teamThreads(log: (s: string) => void, token: string, args:
 
   log(`unknown: ${sub} — run 'maw atlas team-threads help'`);
 }
+
+export { teamThreads as run };

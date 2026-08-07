@@ -1,4 +1,10 @@
 import { resolveInvite, getGuildChannels, filterTextChannels } from "../lib/discord";
+import type { CommandMeta } from "../lib/command-types";
+
+export const meta: CommandMeta = {
+  name: "add-guild",
+  help: "add-guild <invite-or-id>    discover guild channels",
+};
 
 export async function addGuild(log: (s: string) => void, token: string, args: string[]) {
   const input = args[1];
@@ -17,3 +23,5 @@ export async function addGuild(log: (s: string) => void, token: string, args: st
   log(`${text.length} text channels found`);
   for (const ch of text) log(`  💬 #${ch.name} (${ch.id})`);
 }
+
+export { addGuild as run };

@@ -1,4 +1,18 @@
 import { getMessages, listGuilds, getGuildChannels, filterTextChannels } from "../lib/discord";
+import type { CommandMeta } from "../lib/command-types";
+
+export const meta: CommandMeta = {
+  name: "read",
+  help: "read <channel> [N] [--all] [--since D] [--before D] [--format json]  read channel messages",
+  treeLines: [
+    "read <channel> [N]          read channel messages",
+    "--limit=N               message count (default 5)",
+    "--all                   read full channel/thread history",
+    "--since YYYY-MM-DD      include messages from this date/time",
+    "--before YYYY-MM-DD     include messages before this date/time",
+    "--json|--format json    raw Discord JSON output",
+  ],
+};
 
 const DISCORD_EPOCH_MS = 1420070400000;
 
@@ -94,6 +108,8 @@ export async function read(log: (s: string) => void, token: string, args: string
   }
   log(`\n${msgs.length} messages`);
 }
+
+export { read as run };
 
 function flagValue(args: string[], name: string): string | undefined {
   const eq = args.find(a => a.startsWith(`${name}=`));

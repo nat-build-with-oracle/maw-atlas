@@ -1,4 +1,19 @@
 import { getMe, getApplication, updateApplication, toDataUri } from "../lib/discord";
+import type { CommandMeta } from "../lib/command-types";
+
+export const meta: CommandMeta = {
+  name: "app",
+  help: [
+    "app                           show app settings",
+    "app interactions <url>       set Interactions Endpoint URL",
+    "app interactions --clear     remove Interactions Endpoint URL",
+  ].join("\n"),
+  treeLines: [
+    "app                          show app settings",
+    "interactions <url>       set Interactions Endpoint URL",
+    "interactions --clear     remove Interactions Endpoint URL",
+  ],
+};
 
 export async function app(log: (s: string) => void, token: string, args: string[]) {
   const me = await getMe(token);
@@ -63,3 +78,5 @@ export async function app(log: (s: string) => void, token: string, args: string[
   log(`  bot_public: ${info.bot_public}`);
   log(`  flags: ${info.flags}`);
 }
+
+export { app as run };

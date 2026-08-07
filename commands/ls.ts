@@ -1,6 +1,12 @@
 import { listGuilds, getGuildChannels, filterTextChannels, filterVoiceChannels } from "../lib/discord";
+import type { CommandMeta } from "../lib/command-types";
 
-export async function ls(log: (s: string) => void, token: string) {
+export const meta: CommandMeta = {
+  name: "ls",
+  help: "ls                          list guilds + channels",
+};
+
+export async function ls(log: (s: string) => void, token: string, _args?: string[]) {
   const guilds = await listGuilds(token);
   for (const g of guilds) {
     const channels = await getGuildChannels(token, g.id);
@@ -13,3 +19,5 @@ export async function ls(log: (s: string) => void, token: string) {
     log("");
   }
 }
+
+export { ls as run };

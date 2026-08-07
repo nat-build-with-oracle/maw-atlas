@@ -10,8 +10,20 @@
 import { findAtlasRepo } from "../lib/repo";
 import { readdirSync, readFileSync, writeFileSync, existsSync } from "fs";
 import { join } from "path";
+import type { CommandMeta } from "../lib/command-types";
 
-export async function inbox(log: (s: string) => void, args: string[]) {
+export const meta: CommandMeta = {
+  name: "inbox",
+  help: "inbox [--all] [--from=x]    read unread inbox messages",
+  treeLines: [
+    "inbox                       read unread inbox messages",
+    "--all                   include read messages",
+    "--from=<oracle>         filter by sender",
+  ],
+  tokenRequirement: "none",
+};
+
+export async function inbox(log: (s: string) => void, _token: string, args: string[]) {
   const repo = findAtlasRepo();
   if (!repo) { log("✗ atlas-oracle repo not found"); return; }
 
@@ -80,3 +92,5 @@ export async function inbox(log: (s: string) => void, args: string[]) {
     log(`✓ marked ${marked} message(s) as read`);
   }
 }
+
+export { inbox as run };

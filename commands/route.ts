@@ -16,6 +16,13 @@ import { execFile, spawn } from "child_process";
 import { findAtlasRepo } from "../lib/repo";
 import { openMessageStore, type MessageStore, type DiscordMsgRow } from "../lib/discord-db";
 import { createThreadFromMessage, joinThread, postMessage, listGuilds, getGuildChannels, filterTextChannels, getChannel, request as discordRequest } from "../lib/discord";
+import type { CommandMeta } from "../lib/command-types";
+
+export const meta: CommandMeta = {
+  name: "route",
+  help: "route [start|status|once]    bridge Discord threads to codex panes",
+  tokenRequirement: "optional",
+};
 
 type Log = (s: string) => void;
 
@@ -1063,3 +1070,5 @@ export async function route(log: Log, token: string, args: string[]) {
 
   log(`unknown: ${sub} — run 'maw atlas route help'`);
 }
+
+export { route as run };
