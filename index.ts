@@ -22,6 +22,7 @@ import { spawnSession } from "./commands/spawn-session";
 import { route } from "./commands/route";
 import { watch } from "./commands/watch";
 import { transcribe } from "./commands/transcribe";
+import { guild } from "./commands/guild";
 
 export const command = {
   name: "atlas",
@@ -51,6 +52,9 @@ const COMMANDS = `
   slash remove <name-or-id>    remove slash command
   avatar                       show current bot avatar
   avatar set <image-path>      set bot avatar (PNG/JPG/GIF/WebP)
+  guild icon                   show current guild icon URL
+  guild icon set <image-path>  set guild icon (PNG/JPG/GIF/WebP)
+  guild icon --remove          remove guild icon
   app                          show app settings
   app interactions <url>       set Interactions Endpoint URL
   app interactions --clear     remove Interactions Endpoint URL
@@ -101,6 +105,10 @@ export default async function handler(ctx: InvokeContext): Promise<InvokeResult>
     log("│   ├── --all                   include read messages");
     log("│   └── --from=<oracle>         filter by sender");
     log("├── whoami                      bot identity check");
+    log("├── guild icon                  show current guild icon");
+    log("│   ├── set <image-path>       set guild icon");
+    log("│   ├── --remove               remove guild icon");
+    log("│   └── --guild=<id|name>      choose target guild");
     log("└── --tree                      this command tree");
     return done(true);
   }
@@ -133,6 +141,7 @@ export default async function handler(ctx: InvokeContext): Promise<InvokeResult>
       case "threads":   await threads(log, token!, args); break;
       case "slash":     await slash(log, token!, args); break;
       case "avatar":    await avatar(log, token!, args); break;
+      case "guild":     await guild(log, token!, args); break;
       case "app":       await app(log, token!, args); break;
       case "team-threads": await teamThreads(log, token!, args); break;
       case "route":     await route(log, token || "", args); break;
