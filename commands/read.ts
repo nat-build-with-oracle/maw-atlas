@@ -32,9 +32,10 @@ async function listActiveThreads(token: string, guildId: string): Promise<any[]>
 
 export async function read(log: (s: string) => void, token: string, args: string[]) {
   const argv = args.slice(1);
-  const positional = argv.filter(a => !a.startsWith("--"));
+  const positional = extractPositionals(argv);
   const channel = positional[0];
-  const inlineLimit = parseInt(flagValue(args, "--limit") || "");
+  const limitRaw = flagValue(args, "--limit");
+  const inlineLimit = limitRaw !== undefined ? parseInt(limitRaw) : NaN;
   const positionalLimit = parseInt(positional[1] || "");
   const limit = Number.isFinite(inlineLimit) ? inlineLimit : (Number.isFinite(positionalLimit) ? positionalLimit : 5);
   const formatArg = flagValue(args, "--format")?.toLowerCase();
@@ -47,6 +48,10 @@ export async function read(log: (s: string) => void, token: string, args: string
   const before = parseDateInput(beforeRaw);
   const tree = args.includes("--tree") || (!channel && !json);
 
+  if (limitRaw !== undefined && !Number.isFinite(inlineLimit)) {
+    log(`✗ invalid --limit: ${limitRaw}`);
+    return;
+  }
   if (formatArg && formatArg !== "json" && formatArg !== "text") {
     log(`✗ unsupported format: ${formatArg}`);
     return;
@@ -97,6 +102,24 @@ function flagValue(args: string[], name: string): string | undefined {
   return idx >= 0 ? args[idx + 1] : undefined;
 }
 
+// Flags that consume the NEXT token as their value when passed space-separated
+// (`--since 2026-08-01`, not `--since=2026-08-01`). Positional extraction must
+// skip that value token too, or it gets misread as the channel/count.
+const VALUE_FLAGS = ["--limit", "--format", "--since", "--before"];
+
+function extractPositionals(argv: string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a.startsWith("--")) {
+      if (!a.includes("=") && VALUE_FLAGS.includes(a) && i + 1 < argv.length) i++; // skip its value token
+      continue;
+    }
+    out.push(a);
+  }
+  return out;
+}
+
 function parseDateInput(input?: string): Date | null {
   if (!input) return null;
   const date = new Date(input);
@@ -130,8 +153,10 @@ async function readMessages(
     for (const msg of page) {
       const ts = Date.parse(msg.timestamp || "");
       if (sinceMs !== null && Number.isFinite(ts) && ts < sinceMs) {
+        // Discord returns pages newest-first, so every remaining message in
+        // this page is also older than --since — no point checking them.
         reachedSince = true;
-        continue;
+        break;
       }
       out.push(msg);
       if (max && out.length >= max) break;
