@@ -1,0 +1,511 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Backfill — Discord Archive</title>
+<style>
+  /* ── Bifröst design language · a ruled document, comfortable to read ──
+     Sans leads the reading; mono is for machine data. Never a raw color
+     outside this token block. Linen (warm paper) by default, walnut night
+     via prefers-color-scheme. */
+  :root {
+    --bg: oklch(0.968 0.014 82);          /* warm paper page */
+    --surface: oklch(0.995 0.008 84);     /* panel/receipt bg */
+    --raise: oklch(0.940 0.018 80);       /* raised/hover tint */
+    --line: oklch(0.720 0.030 78);        /* standard border */
+    --line-soft: oklch(0.868 0.020 80);   /* hairline dividers */
+    --rule: oklch(0.360 0.020 60);        /* strong 2px section rules */
+    --ink: oklch(0.235 0.020 60);         /* primary text */
+    --muted: oklch(0.410 0.022 60);       /* secondary text */
+    --faint: oklch(0.478 0.022 60);       /* tertiary/ages */
+    --brand: oklch(0.475 0.135 200);      /* teal-blue key */
+    --on-brand: oklch(0.990 0.006 84);
+    --ok: oklch(0.495 0.150 150);         /* moss */
+    --bad: oklch(0.540 0.210 28);         /* clear red */
+    --stale: oklch(0.510 0.020 60);
+    --warn: oklch(0.505 0.140 66);        /* amber */
+
+    --focus-ring: color-mix(in oklch, var(--brand) 55%, transparent);
+    --lamp-glow: 30%;
+    --warn-banner-tint: 12%;
+    --warn-banner-border: 55%;
+    --row-warn-tint: 9%;
+
+    --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Sukhumvit Set", "Noto Sans Thai", sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { /* night — walnut dark */
+      --bg: oklch(0.163 0.010 65);
+      --surface: oklch(0.198 0.011 66);
+      --raise: oklch(0.240 0.012 66);
+      --line: oklch(0.420 0.016 70);
+      --line-soft: oklch(0.300 0.013 68);
+      --rule: oklch(0.560 0.014 78);
+      --ink: oklch(0.950 0.008 82);
+      --muted: oklch(0.780 0.014 78);
+      --faint: oklch(0.700 0.014 74);
+      --brand: oklch(0.720 0.110 195);
+      --on-brand: oklch(0.163 0.010 65);
+      --ok: oklch(0.780 0.115 152);
+      --bad: oklch(0.700 0.190 27);
+      --stale: oklch(0.720 0.014 74);
+      --warn: oklch(0.815 0.130 85);
+      --lamp-glow: 45%;
+      --warn-banner-tint: 9%;
+      --warn-banner-border: 48%;
+      --row-warn-tint: 7%;
+    }
+  }
+
+  * { box-sizing: border-box; margin: 0; }
+  html { font-size: 16px; }
+  body {
+    background: var(--bg); color: var(--ink);
+    font: 14px/1.6 var(--font-sans);
+    padding: 24px 28px 40px; max-width: 1100px; margin: 0 auto;
+  }
+  .shell { display: flex; flex-direction: column; gap: 14px; }
+  .mono { font-family: var(--font-mono); }
+  .dim { color: var(--faint); }
+
+  /* ── header: wordmark line + sub, ruled like a document head ── */
+  header { border-bottom: 2px solid var(--rule); padding-bottom: 8px; }
+  .wordmark { font: 700 17px var(--font-mono); letter-spacing: 0.09em; color: var(--ink); }
+  .wm-sub { font-size: 14px; color: var(--muted); margin-left: 6px; }
+  .wm-counts { font-size: 13px; color: var(--faint); margin-left: 6px; font-variant-numeric: tabular-nums; }
+  .sub { color: var(--muted); font-size: 13px; margin-top: 4px; }
+
+  /* ── chip row (quick stats) ── */
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip {
+    display: inline-flex; align-items: baseline; gap: 6px;
+    border: 1px solid var(--line); border-radius: 4px;
+    padding: 1px 8px; font: 13px var(--font-sans); color: var(--muted); white-space: nowrap;
+  }
+  .chip b { color: var(--ink); font-weight: 600; font-family: var(--font-mono); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+  .chip.warned { border-color: color-mix(in oklch, var(--warn) 50%, transparent); color: var(--warn); }
+  .chip.warned b { color: var(--warn); }
+
+  /* ── the bridge: status-dot strip, hairline through the middle ── */
+  .bridge { position: relative; padding: 8px 4px; min-height: 36px; }
+  .bridge-line { position: absolute; left: 4px; right: 4px; top: 50%; height: 1px; background: var(--line); }
+  .lamps { position: relative; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; justify-content: space-between; min-height: 20px; }
+  .lamp {
+    width: 13px; height: 13px; border-radius: 9999px; border: 0; padding: 0;
+    background: var(--faint); cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center;
+    font: 700 11px/1 var(--font-mono); color: var(--bg);
+    transition: transform 0.15s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .lamp:hover { transform: scale(1.4); }
+  .lamp-ok { background: var(--ok); }
+  .lamp-idle { background: var(--faint); }
+  .lamp-empty { background: transparent; border: 2px solid var(--muted); }
+  .lamp-warn, .lamp-dead { width: 20px; height: 20px; }
+  .lamp-warn {
+    --pulse: var(--warn); background: var(--warn);
+    box-shadow: 0 0 10px 1px color-mix(in oklch, var(--warn) var(--lamp-glow), transparent);
+    animation: lamp-pulse 2.6s ease-out infinite;
+  }
+  .lamp-dead {
+    --pulse: var(--bad); background: var(--bad);
+    box-shadow: 0 0 10px 1px color-mix(in oklch, var(--bad) var(--lamp-glow), transparent);
+    animation: lamp-pulse 1.8s ease-out infinite;
+  }
+  @keyframes lamp-pulse {
+    0% { outline: 0 solid color-mix(in oklch, var(--pulse) 40%, transparent); }
+    70% { outline: 6px solid transparent; }
+    100% { outline: 0 solid transparent; }
+  }
+
+  /* ── toolbar ── */
+  .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  button { font: inherit; cursor: pointer; }
+  button:disabled { opacity: .4; cursor: default; }
+  :where(button, input):focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+  .btn {
+    border-radius: 6px; border: 1px solid var(--line); background: transparent;
+    padding: 6px 12px; font-size: 13.5px; color: var(--muted); transition: color .15s;
+  }
+  .btn:hover:not(:disabled) { color: var(--ink); }
+  .btn-primary {
+    border-radius: 6px; border: 0; background: var(--brand); color: var(--on-brand);
+    padding: 6px 14px; font-size: 13.5px; font-weight: 600;
+    transition: filter .15s;
+  }
+  .btn-primary:hover:not(:disabled) { filter: brightness(1.1); }
+  .btn-primary:active { filter: brightness(.95); }
+  #jobstate { font: 500 13px var(--font-mono); color: var(--muted); }
+
+  /* ── job log ── */
+  #log {
+    display: none; background: var(--surface); border: 1px solid var(--line-soft); border-radius: 6px;
+    padding: 12px 16px; font: 12.5px/1.7 var(--font-mono); color: var(--ink);
+    white-space: pre-wrap; max-height: 260px; overflow-y: auto;
+  }
+  #log.on { display: block; }
+
+  /* ── warning banner (exists only while gaps exist) ── */
+  #banner { display: none; }
+  #banner.on { display: block; }
+  .warn-banner {
+    background: color-mix(in oklch, var(--warn) var(--warn-banner-tint), transparent);
+    border: 1px solid color-mix(in oklch, var(--warn) var(--warn-banner-border), transparent);
+    border-radius: 6px; padding: 8px 14px;
+  }
+  .warn-banner .bt { font-size: 13.5px; font-weight: 600; color: var(--warn); margin-bottom: 2px; }
+  .warn-banner .bl {
+    display: block; width: 100%; text-align: left; background: none; border: 0; padding: 1px 0;
+    font: 13px var(--font-sans); color: var(--muted);
+  }
+  .warn-banner .bl:hover { color: var(--ink); }
+
+  /* ── sections: ruled document, not cards ── */
+  section { min-width: 0; }
+  #gaps { display: none; }
+  #gaps.on { display: block; }
+  .section-head {
+    display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+    border-bottom: 2px solid var(--rule); padding-bottom: 6px; margin-bottom: 2px;
+  }
+  .section-title { font: 700 13.5px var(--font-mono); letter-spacing: 0.14em; color: var(--ink); }
+  .section-title.caps { text-transform: uppercase; }
+  .section-note { font: 400 13px var(--font-sans); color: var(--muted); font-variant-numeric: tabular-nums; }
+
+  /* ── filter field: borderless, sits under a hairline ── */
+  .filterwrap { border-bottom: 1px solid var(--line-soft); }
+  #filter {
+    width: 100%; background: transparent; border: 0; padding: 8px 4px;
+    font: 13.5px var(--font-sans); color: var(--ink);
+  }
+  #filter::placeholder { color: var(--muted); }
+  #filter:focus { outline: none; }
+
+  /* ── ledger tables ── */
+  .tablewrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  th {
+    font: 600 11.5px var(--font-mono); text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--muted); text-align: left; padding: 6px 8px;
+    border-bottom: 1px solid var(--line-soft);
+    position: sticky; top: 0; background: var(--bg); white-space: nowrap;
+  }
+  th.n { text-align: right; }
+  td { padding: 11px 8px; border-bottom: 1px solid var(--line-soft); font-size: 14px; vertical-align: middle; }
+  tbody tr:last-child td { border-bottom: 0; }
+  tbody tr:hover td { background: color-mix(in oklch, var(--raise) 40%, transparent); }
+  tbody tr.row-warned td { background: color-mix(in oklch, var(--warn) var(--row-warn-tint), transparent); }
+  td.num { text-align: right; font: 400 13px var(--font-mono); font-variant-numeric: tabular-nums; color: var(--faint); width: 2.2em; }
+  td.n { text-align: right; font-family: var(--font-mono); font-size: 13px; font-variant-numeric: tabular-nums; }
+  td.name { font-weight: 600; font-size: 15px; letter-spacing: -0.01em; white-space: nowrap; max-width: 24ch; overflow: hidden; text-overflow: ellipsis; }
+  td.trunc { white-space: nowrap; max-width: 18ch; overflow: hidden; text-overflow: ellipsis; }
+  td.t13 { font-family: var(--font-mono); font-size: 13px; color: var(--faint); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .stword { font: 500 13px var(--font-mono); white-space: nowrap; }
+  .st-ok { color: var(--ok); }
+  .st-warn { color: var(--warn); }
+  .st-bad { color: var(--bad); }
+  .st-stale { color: var(--stale); }
+  .act { display: flex; gap: 6px; }
+  .act button, button.act-btn {
+    border-radius: 6px; border: 1px solid var(--line); background: transparent;
+    padding: 3px 8px; font-size: 13px; color: var(--muted); white-space: nowrap; transition: color .15s;
+  }
+  .act button:hover:not(:disabled), button.act-btn:hover:not(:disabled) { color: var(--ink); }
+
+  /* ── messages ── */
+  #msgs { display: none; }
+  #msgs.on { display: block; }
+  #msgs-title { text-transform: none; letter-spacing: 0.02em; }
+  .msg { border-bottom: 1px solid var(--line-soft); padding: 9px 4px; }
+  .msg:last-child { border-bottom: 0; }
+  .msg .who { color: var(--brand); font: 600 13px var(--font-mono); }
+  .msg .when { color: var(--faint); font: 400 12px var(--font-mono); margin-left: 8px; font-variant-numeric: tabular-nums; }
+  .msg .body { white-space: pre-wrap; word-break: break-word; margin-top: 1px; }
+  .bot {
+    color: var(--warn); border: 1px solid color-mix(in oklch, var(--warn) 50%, transparent);
+    border-radius: 4px; padding: 0 4px; margin-left: 6px; font: 500 10px var(--font-mono);
+  }
+
+  /* ── bottom register bar ── */
+  .register {
+    border-top: 2px solid var(--rule); padding-top: 10px;
+    font: 400 13px var(--font-sans); color: var(--muted);
+    display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  }
+
+  /* ── motion ── */
+  @keyframes enter { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: none; } }
+  .enter { animation: enter 0.18s cubic-bezier(0.22, 1, 0.36, 1); }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+  }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: var(--line); border-radius: 5px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--faint); }
+  ::-webkit-scrollbar-track { background: transparent; }
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <header>
+    <div>
+      <span class="wordmark">🌊📜 BACKFILL</span><span class="wm-sub">— the message ledger</span><span class="wm-counts">· <span id="h-total">…</span> ข้อความ · <span id="h-channels">…</span> channels</span>
+    </div>
+    <div class="sub">producer control panel · atlas-discord-backfill-oracle · กดปุ่มเพื่อดาวน์โหลด (backfill) แล้วดูข้อมูลได้เลย</div>
+  </header>
+
+  <div class="chips">
+    <span class="chip">ข้อความทั้งหมด <b id="t-total">…</b></span>
+    <span class="chip">channels <b id="t-channels">…</b></span>
+    <span class="chip">guilds <b id="t-guilds">…</b></span>
+    <span class="chip">sweep ล่าสุด <b id="t-sweep">…</b></span>
+    <span class="chip" id="c-bad">rows ค้าง migration (channel ที่ถูกลบ) <b id="t-bad">…</b></span>
+  </div>
+
+  <div class="bridge">
+    <div class="bridge-line"></div>
+    <div class="lamps" id="bridge-lamps"></div>
+  </div>
+
+  <div class="toolbar">
+    <button id="b-sweep" class="btn-primary">⬇ Sweep เดี๋ยวนี้ (ทุก channel)</button>
+    <button id="b-gaps" class="btn">🔍 สแกนหา gaps</button>
+    <button id="b-refresh" class="btn">↻ รีเฟรชข้อมูล</button>
+    <button id="b-names" class="btn">🏷 โหลดชื่อ channel ใหม่</button>
+    <span id="jobstate"></span>
+  </div>
+
+  <div id="log"></div>
+
+  <div id="banner"></div>
+
+  <section id="gaps">
+    <div class="section-head">
+      <span class="section-title caps">🕳 Gaps</span>
+      <span class="section-note" id="gaps-at"></span>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th></th><th>ชนิด</th><th>channel</th><th>guild</th><th>รายละเอียด</th><th></th></tr></thead>
+        <tbody id="gaps-rows"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <span class="section-title caps">Channels — Ledger</span>
+    </div>
+    <div class="filterwrap">
+      <input id="filter" type="text" placeholder="กรอง — name / guild / id" autocomplete="off">
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th></th><th>channel</th><th>guild</th><th class="n">ข้อความ</th><th>ล่าสุด</th><th>status</th><th>ดาวน์โหลด / ดู</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="msgs">
+    <div class="section-head">
+      <span class="section-title" id="msgs-title"></span>
+    </div>
+    <div id="msgs-list"></div>
+  </section>
+
+  <div class="register">
+    <span>atlas-discord-backfill-oracle · backfill register</span>
+    <span id="reg-note">―◌― standby</span>
+  </div>
+
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+// Discord-controlled strings (names, guilds, details) are untrusted — always esc() before innerHTML
+const esc = s => String(s).replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+const fmtN = n => n.toLocaleString("en-US");
+const fmtT = iso => iso ? new Date(iso).toLocaleString("th-TH", { dateStyle: "short", timeStyle: "short" }) : "—";
+const DAY = 864e5;
+
+let CHANNELS = [];
+let GAPS = [];
+let GAPSET = new Set();
+let FILTER = "";
+
+// status vocabulary — glyph + word travel together, never color alone
+const ST = {
+  fresh: { glyph: "✓", cls: "st-ok",    lamp: "lamp-ok",    label: "fresh" },
+  idle:  { glyph: "·", cls: "st-stale", lamp: "lamp-idle",  label: "idle" },
+  quiet: { glyph: "!", cls: "st-warn",  lamp: "lamp-warn",  label: "quiet" },
+  gap:   { glyph: "✖", cls: "st-bad",   lamp: "lamp-dead",  label: "gap" },
+  empty: { glyph: "◌", cls: "st-stale", lamp: "lamp-empty", label: "ว่าง" },
+};
+
+function chStatus(c) {
+  if (GAPSET.has(c.id)) return "gap";
+  if (!c.n || !c.latest) return "empty";
+  const age = Date.now() - new Date(c.latest).getTime();
+  if (age < DAY) return "fresh";
+  if (age > 7 * DAY) return "quiet";
+  return "idle";
+}
+
+const stword = st => `<span class="stword ${ST[st].cls}">―${ST[st].glyph}― ${ST[st].label}</span>`;
+
+async function loadStats() {
+  const s = await fetch("/api/stats").then(r => r.json());
+  CHANNELS = s.channels;
+  $("h-total").textContent = fmtN(s.total);
+  $("h-channels").textContent = fmtN(s.channels.length);
+  $("t-total").textContent = fmtN(s.total);
+  $("t-channels").textContent = fmtN(s.channels.length);
+  $("t-guilds").textContent = fmtN(Object.keys(s.guilds).length || new Set(s.channels.map(c => c.gid).filter(Boolean)).size);
+  $("t-sweep").textContent = fmtT(s.lastSweep);
+  $("t-bad").textContent = fmtN(s.badRows);
+  $("c-bad").classList.toggle("warned", s.badRows > 0);
+  renderRows();
+  renderBridge();
+}
+
+function renderRows() {
+  const q = FILTER.trim().toLowerCase();
+  $("rows").innerHTML = CHANNELS
+    .map((c, i) => ({ c, i }))
+    .filter(({ c }) => !q || [c.name, c.guildName, c.id].some(v => (v || "").toLowerCase().includes(q)))
+    .map(({ c, i }) => {
+      const st = chStatus(c);
+      return `
+    <tr id="row-${esc(c.id)}"${st === "quiet" || st === "gap" ? ' class="row-warned"' : ""}>
+      <td class="num">${String(i + 1).padStart(2, "0")}</td>
+      <td class="name" title="${esc(c.name ? "#" + c.name : c.id)}">${c.name ? "#" + esc(c.name) : '<span class="dim mono">' + esc(c.id) + "</span>"}</td>
+      <td class="dim trunc" title="${esc(c.guildName || "")}">${esc(c.guildName || "—")}</td>
+      <td class="n">${fmtN(c.n)}</td>
+      <td class="t13">${fmtT(c.latest)}</td>
+      <td>${stword(st)}</td>
+      <td><div class="act">
+        <button onclick="backfill(${esc(JSON.stringify(c.id))})">⬇ เต็ม</button>
+        <button onclick="view(${esc(JSON.stringify(c.id))})">👁 ดู</button>
+        <button onclick="location='/api/export?channel_id=${esc(encodeURIComponent(c.id))}&format=json'">JSON</button>
+        <button onclick="location='/api/export?channel_id=${esc(encodeURIComponent(c.id))}&format=csv'">CSV</button>
+      </div></td>
+    </tr>`;
+    }).join("");
+}
+
+// the bridge — one lamp per channel; healthy is quiet-by-size, trouble grows + glows
+function renderBridge() {
+  $("bridge-lamps").innerHTML = CHANNELS.map(c => {
+    const st = chStatus(c);
+    const inner = st === "gap" ? "✖" : st === "quiet" ? "!" : "";
+    const nm = c.name ? "#" + c.name : c.id;
+    return `<button class="lamp ${ST[st].lamp}" title="${esc(nm)} — ${ST[st].label}" onclick="jumpRow(${esc(JSON.stringify(c.id))})">${inner}</button>`;
+  }).join("");
+}
+
+function jumpRow(id) {
+  const el = document.getElementById("row-" + id);
+  if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+function jumpGaps() { $("gaps").scrollIntoView({ behavior: "smooth" }); }
+
+let polling = null;
+function watchJob() {
+  if (polling) return;
+  $("log").classList.add("on");
+  polling = setInterval(async () => {
+    const j = await fetch("/api/job").then(r => r.json());
+    $("jobstate").textContent = j.title ? `${j.done ? "✓" : "⏳"} ${j.title}` : "";
+    $("reg-note").textContent = j.title ? (j.done ? `―✓― ${j.title}` : `―◈― ${j.title}…`) : "―◌― standby";
+    $("log").textContent = (j.lines || []).join("\n");
+    $("log").scrollTop = $("log").scrollHeight;
+    $("b-sweep").disabled = !j.done;
+    if (j.done) { clearInterval(polling); polling = null; loadStats(); loadGaps(); }
+  }, 1000);
+}
+
+async function post(url, body) {
+  const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+  if (r.status === 409) { alert("มี job กำลังรันอยู่ รอให้จบก่อนครับ"); return false; }
+  return true;
+}
+
+// gap kinds: [label, status-class, glyph]
+const KIND = {
+  "zero-row": ["ว่าง", "st-warn", "◌"],
+  bottom: ["ก้นขาด", "st-bad", "✖"],
+  cursor: ["hole", "st-bad", "✖"],
+  deleted: ["ตายแล้ว", "st-stale", "◌"],
+};
+
+async function loadGaps() {
+  const g = await fetch("/api/gaps").then(r => r.json());
+  if (!g.at) return;
+  GAPS = g.gaps;
+  GAPSET = new Set(g.gaps.map(x => x.channelId));
+  $("gaps").classList.add("on");
+  $("gaps-at").textContent = "สแกนเมื่อ " + fmtT(g.at) + (g.gaps.length ? ` · ${g.gaps.length} gaps` : " · ไม่พบ gap 🎉");
+  $("gaps-rows").innerHTML = g.gaps.map((x, i) => {
+    const k = KIND[x.kind] || [esc(x.kind), "st-stale", "?"];
+    return `
+    <tr class="row-warned">
+      <td class="num">${String(i + 1).padStart(2, "0")}</td>
+      <td><span class="stword ${k[1]}">―${k[2]}― ${k[0]}</span></td>
+      <td class="name" title="${esc(x.name ? "#" + x.name : x.channelId)}">${x.name ? "#" + esc(x.name) : '<span class="dim mono">' + esc(x.channelId) + "</span>"}</td>
+      <td class="dim trunc" title="${esc(x.guild || "")}">${esc(x.guild || "—")}</td>
+      <td class="t13">${esc(x.detail)}</td>
+      <td>${x.kind === "deleted" ? "" : `<button class="act-btn" onclick="backfill(${esc(JSON.stringify(x.channelId))})">⬇ เติม</button>`}</td>
+    </tr>`;
+  }).join("");
+  renderBanner();
+  renderRows();    // gap rows pick up their amber tint + red status word
+  renderBridge();  // dead lamps light up
+}
+
+// summary banner — exists ONLY while gaps exist
+function renderBanner() {
+  const b = $("banner");
+  if (!GAPS.length) { b.className = ""; b.innerHTML = ""; return; }
+  b.className = "warn-banner enter on";
+  b.innerHTML = `<div class="bt">⚠ ${GAPS.length} เรื่องต้องดู</div>` + GAPS.map(x => {
+    const k = (KIND[x.kind] || [esc(x.kind)])[0];
+    return `<button class="bl" onclick="jumpGaps()">↓ ${k} — ${esc(x.name ? "#" + x.name : x.channelId)}</button>`;
+  }).join("");
+}
+
+$("b-gaps").onclick = async () => { if (await post("/api/gaps/scan")) watchJob(); };
+$("b-sweep").onclick = async () => { if (await post("/api/sweep")) watchJob(); };
+$("b-refresh").onclick = loadStats;
+$("b-names").onclick = async () => { $("b-names").disabled = true; await post("/api/names/refresh"); $("b-names").disabled = false; loadStats(); };
+$("filter").oninput = e => { FILTER = e.target.value; renderRows(); };
+
+async function backfill(id) { if (await post("/api/backfill", { channelId: id })) watchJob(); }
+
+async function view(id) {
+  const ch = CHANNELS.find(c => c.id === id);
+  const name = (ch && ch.name) || id;
+  const list = await fetch(`/api/messages?channel_id=${encodeURIComponent(id)}&limit=100`).then(r => r.json());
+  $("msgs").classList.add("on");
+  $("msgs-title").textContent = `#${name} — ${list.length} ข้อความล่าสุด`;
+  $("msgs-list").innerHTML = list.map(m => `
+    <div class="msg">
+      <span class="who">${esc(m.author_name || "?")}</span>${m.author_is_bot ? '<span class="bot">bot</span>' : ""}
+      <span class="when">${fmtT(m.ts)}</span>
+      <div class="body"></div>
+    </div>`).join("");
+  // content via textContent — never innerHTML (Discord text is untrusted)
+  document.querySelectorAll("#msgs-list .body").forEach((el, i) => {
+    el.textContent = list[i].content || (list[i].attachments_json ? "📎 attachment" : "(ว่าง)");
+  });
+  $("msgs").scrollIntoView({ behavior: "smooth" });
+}
+
+loadStats();
+loadGaps();
+</script>
+</body>
+</html>
