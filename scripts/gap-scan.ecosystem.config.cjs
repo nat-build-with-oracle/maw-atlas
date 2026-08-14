@@ -1,5 +1,5 @@
 // pm2 job: daily archive gap-scan + auto-heal (one-shot, 04:30).
-// Owner: atlas-discord-backfill-oracle. Load with:
+// Owner: maw-atlas (cli/bf.ts front-end) — absorbed from atlas-discord-backfill-oracle 2026-08-15. Load with:
 //   env -u cron_restart pm2 start scripts/gap-scan.ecosystem.config.cjs && env -u cron_restart pm2 save
 // (bare `cron_restart` env vars silently override this file's value — see ingest-sweep notes)
 module.exports = {

@@ -7,7 +7,8 @@
 # rows yet fall back to a newest-style backward walk. Never touches :oldest
 # cursors. Deep history walk = `route backfill <ch> --full`.
 #
-# Owner: atlas-discord-backfill-oracle (producer/ingest-keeper). Scheduled on
+# Owner: maw-atlas (cli/bf.ts front-end) — absorbed from atlas-discord-backfill-oracle
+# 2026-08-15 (producer/ingest-keeper). Scheduled on
 # m5 via pm2 (name: mirror-ingest-sweep, cron_restart */10, autorestart off —
 # this is a one-shot, NOT a daemon; "stopped" between fires is normal).
 # Moved here from mirror-oracle/scripts/ 2026-07-15 — producer logic lives

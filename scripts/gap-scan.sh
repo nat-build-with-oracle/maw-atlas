@@ -1,6 +1,6 @@
 #!/bin/bash
 # gap-scan — daily archive completeness check + auto-heal (charter task 3, cron form).
-# Owner: atlas-discord-backfill-oracle. Green-lit by Nat 2026-07-16.
+# Owner: maw-atlas (cli/bf.ts front-end) — absorbed from atlas-discord-backfill-oracle 2026-08-15. Green-lit by Nat 2026-07-16.
 #
 # 1. detect-gaps.ts probes every channel (read-only, ~200 REST calls, 429-backoff'd)
 # 2. fixable gaps (zero-row/bottom/cursor) → route backfill <ch> --full (idempotent)
