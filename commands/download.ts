@@ -31,11 +31,21 @@ function intArg(args: string[], name: string, def: number): number {
   return Number.isFinite(n) && n > 0 ? n : def;
 }
 
+// Only a genuine 404 means "not this kind of target — try the next guess".
+// Anything else (401 bad token, network error, retry-exhausted 5xx from
+// lib/discord.ts's request()) is a real failure and must propagate, not get
+// silently reported as "id not found" — that misdiagnosis costs debugging
+// time on real infra (fail loud, per fleet convention).
+function isNotFound(e: unknown): boolean {
+  return /\s404\s/.test(e instanceof Error ? e.message : String(e));
+}
 async function tryGetGuild(token: string, id: string): Promise<any | null> {
-  try { return await getGuild(token, id); } catch { return null; }
+  try { return await getGuild(token, id); }
+  catch (e) { if (isNotFound(e)) return null; throw e; }
 }
 async function tryGetChannel(token: string, id: string): Promise<any | null> {
-  try { return await getChannel(token, id); } catch { return null; }
+  try { return await getChannel(token, id); }
+  catch (e) { if (isNotFound(e)) return null; throw e; }
 }
 
 export async function run(log: Log, token: string, args: string[]) {
@@ -73,7 +83,14 @@ export async function run(log: Log, token: string, args: string[]) {
     }
 
     const isThread = !!channel.thread_metadata;
-    const dbChannelId: string = isThread ? (channel.parent_id ?? id) : id;
+    if (isThread && !channel.parent_id) {
+      // Never substitute a wrong id — that's the exact "hardcoded to channel_id"
+      // corruption class this command exists to avoid, and it'd be permanent
+      // (INSERT OR IGNORE means a later correct re-run can't fix it).
+      log(`✗ thread "${channel.name ?? id}" (${id}) has no parent_id in Discord's response — refusing to guess, nothing downloaded.`);
+      return;
+    }
+    const dbChannelId: string = isThread ? channel.parent_id : id;
     const dbThreadId: string | null = isThread ? id : null;
     log(`download ${isThread ? "thread" : "channel"} "#${channel.name}" (${id}) → ${dbPath}`);
     const r = await walkTarget(token, store, id, dbChannelId, dbThreadId, channel.guild_id ?? null, opts);
