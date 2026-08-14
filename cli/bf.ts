@@ -142,7 +142,7 @@ async function resolveChannel(arg: string): Promise<{ id: string; name: string |
   return { id: hits[0][0], name: hits[0][1].name };
 }
 
-// ── log adapter for routeBackfill ──────────────────────────────────────────
+// ── log adapter for routeBackfill / download ────────────────────────────────
 const streamLog = (s: string) => console.log(s);
 async function runBackfill(args: string[]) {
   const { getToken } = await import(join(MAW_ATLAS, "lib/discord.ts"));
@@ -150,6 +150,13 @@ async function runBackfill(args: string[]) {
   const token = getToken();
   if (!token) die("ไม่มี token — ตั้ง DISCORD_BOT_TOKEN หรือ `pass insert discord/atlas-oracle-token`");
   await routeBackfill(streamLog, token, args);
+}
+async function runDownload(args: string[]) {
+  const { getToken } = await import(join(MAW_ATLAS, "lib/discord.ts"));
+  const { run } = await import(join(MAW_ATLAS, "commands/download.ts"));
+  const token = getToken();
+  if (!token) die("ไม่มี token — ตั้ง DISCORD_BOT_TOKEN หรือ `pass insert discord/atlas-oracle-token`");
+  await run(streamLog, token, args);
 }
 
 // ── subcommands ────────────────────────────────────────────────────────────
@@ -238,6 +245,12 @@ async function cmdFill(chArg?: string) {
   const { id, name } = await resolveChannel(chArg);
   console.log(bold("bf fill") + dim(` — deep backfill --full → ${name ? "#" + name : id}`));
   await runBackfill(["route", "backfill", id, "--full"]);
+}
+
+async function cmdDownload(idArg?: string, rest: string[] = []) {
+  if (!idArg || !/^\d{17,20}$/.test(idArg)) die("ใช้: bf download <guildId|channelId|threadId> [--max=N]  (snowflake เท่านั้น — ไม่รับ #ชื่อ)");
+  console.log(bold("bf download") + dim(` — explicit full download (guild/channel/thread, ไม่มี cursor) → ${idArg}`));
+  await runDownload(["download", idArg, ...rest]);
 }
 
 async function cmdView(chArg?: string, nArg?: string) {
@@ -331,16 +344,19 @@ ${bold("ใช้งาน")}
   bf sweep              ดึงข้อความใหม่ทุก channel (incremental)
   bf gaps               สแกนหาช่องโหว่ประวัติ → ${GAPS_JSON}
   bf fill <ch>          deep backfill ย้อนประวัติทั้งหมดของ channel เดียว (--full)
+  bf download <id> [--max=N]   ดาวน์โหลดทั้ง guild/channel/thread แบบ explicit ${dim("(ไม่มี cursor, snowflake เท่านั้น)")}
   bf view <ch> [n]      ดู n ข้อความล่าสุด (default 20)
   bf export <ch> [--csv] [-o path]   export JSON (default) หรือ CSV
   bf channels [query] [--refresh]    รายชื่อ channel ทั้งหมด (refresh = ดึงชื่อใหม่จาก Discord)
   bf help               หน้านี้
 
 ${bold("<ch>")} รับได้ทั้ง snowflake, #ชื่อ, หรือเศษชื่อ ${dim("(กำกวม = โชว์ตัวเลือกแล้วออก)")}
+${bold("<id>")} (สำหรับ download) รับเฉพาะ snowflake ${dim("(guild, channel, หรือ thread — ตรวจชนิดอัตโนมัติ)")}
 
 ${bold("ตัวอย่าง")}
   bf view #general 50
   bf fill oracle-log
+  bf download 1500665320501940267        ${dim("← ทั้ง guild (channels+threads)")}
   bf export 1391430075695693937 --csv -o /tmp/log.csv
   bf channels atlas`);
 }
@@ -353,6 +369,7 @@ try {
     case "sweep": await cmdSweep(); break;
     case "gaps": await cmdGaps(); break;
     case "fill": await cmdFill(rest[0]); break;
+    case "download": await cmdDownload(rest[0], rest.slice(1)); break;
     case "view": await cmdView(rest[0], rest[1]); break;
     case "export": await cmdExport(rest[0], rest.slice(1)); break;
     case "channels": case "ch": await cmdChannels(rest); break;
