@@ -38,6 +38,8 @@ export interface WalkOpts {
   /** Positive integer or Infinity — Infinity is the default (no forced cap; see SPEC). */
   max: number;
   verbose: boolean;
+  /** Called with every raw Discord message fetched, before it is reduced to a row (used by the channel blob). */
+  onMessage?: (msg: any) => void;
 }
 
 export interface WalkResult {
@@ -68,6 +70,7 @@ export async function walkTarget(
     for (const m of batch) {
       if (!m.id) continue;
       fetched++;
+      opts.onMessage?.(m);
       inserted += store.insert(toRow(m, dbChannelId, guildId, dbThreadId));
     }
     before = batch[batch.length - 1].id;

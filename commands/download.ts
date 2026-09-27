@@ -10,16 +10,25 @@
  *
  * Full spec: ψ/incubate/nat-build-with-oracle/maw-atlas/SPEC-download-command.md
  * (atlas-oracle repo) — settled via /grill-me, 2026-08-14.
+ *
+ * --out[=DIR] (channel or thread only): also write a self-contained blob — raw
+ * Discord JSON, attachment bytes, and a threads.md listing every thread inside —
+ * as <channel-name>-<channelId>.tar.gz. A channel id then includes its threads.
+ * See lib/channel-archive.ts.
  */
 import { getGuild, getChannel, listGuilds } from "../lib/discord";
 import { openMessageStore, archiveDbPath } from "../lib/discord-db";
 import { walkGuild } from "../lib/download-guild";
 import { walkTarget } from "../lib/download-target";
+import { archiveChannel, blobDir, logBlob } from "../lib/channel-archive";
 import type { CommandMeta, Log } from "../lib/command-types";
 
 export const meta: CommandMeta = {
   name: "download",
-  help: "download <guildId|channelId|threadId> [--max=N]   explicit full download, no cursor, idempotent",
+  help: [
+    "download <guildId|channelId|threadId> [--max=N]   explicit full download, no cursor, idempotent",
+    "download <channelId|threadId> --out[=DIR]   + blob: raw JSON, attachments, threads.md (.tar.gz)",
+  ].join("\n"),
 };
 
 function intArg(args: string[], name: string, def: number): number {
@@ -50,10 +59,16 @@ export async function run(log: Log, token: string, args: string[]) {
   const id = args[1];
   if (!id || !/^\d{17,20}$/.test(id)) {
     log("usage: maw atlas download <guildId|channelId|threadId> [--max=N]");
+    log("       maw atlas download <channelId|threadId> --out[=DIR]");
     log("  auto-detects the id's type — whole guild (channels+threads), a single channel, or a single thread");
     log("  no modes, no cursor file — idempotent full walk, safe to re-run any time");
+    log(`  --out also writes <channel-name>-<channelId>.tar.gz (raw JSON + attachments + threads.md) to DIR, default ${blobDir()}`);
     return;
   }
+
+  const outFlag = args.find(a => a === "--out" || a.startsWith("--out="));
+  const outDir = outFlag === undefined ? undefined : outFlag.slice("--out=".length) || blobDir();
+  if (outDir && args.some(a => a.startsWith("--max="))) throw new Error("--max can't be combined with --out — a blob is always the full history");
 
   const max = intArg(args, "--max", Number.POSITIVE_INFINITY);
   const dbPath = archiveDbPath();
@@ -63,6 +78,7 @@ export async function run(log: Log, token: string, args: string[]) {
   try {
     const guild = await tryGetGuild(token, id);
     if (guild) {
+      if (outDir) throw new Error("--out exports one channel or thread, not a whole guild");
       log(`download guild "${guild.name}" (${id}) → ${dbPath}`);
       const r = await walkGuild(log, token, store, id, opts);
       log(`done: ${r.channels} channel(s), ${r.threads} thread(s), ${r.fetched} fetched, ${r.inserted} new`);
@@ -88,6 +104,14 @@ export async function run(log: Log, token: string, args: string[]) {
       log(`✗ thread "${channel.name ?? id}" (${id}) has no parent_id in Discord's response — refusing to guess, nothing downloaded.`);
       return;
     }
+    if (outDir) {
+      log(`download ${isThread ? "thread" : "channel"} "#${channel.name}" (${id}) → ${dbPath} + blob in ${outDir}`);
+      const r = await archiveChannel(token, store, channel, outDir);
+      log(`done: ${r.threads} thread(s), ${r.fetched} fetched, ${r.inserted} new`);
+      logBlob(log, r.blob!);
+      return;
+    }
+
     const dbChannelId: string = isThread ? channel.parent_id : id;
     const dbThreadId: string | null = isThread ? id : null;
     log(`download ${isThread ? "thread" : "channel"} "#${channel.name}" (${id}) → ${dbPath}`);
