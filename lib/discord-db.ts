@@ -11,8 +11,8 @@
  * map, no query need) — this table is only the queryable message archive.
  */
 import { Database } from "bun:sqlite";
-import { mkdirSync } from "fs";
-import { dirname } from "path";
+import { existsSync, mkdirSync, readdirSync } from "fs";
+import { dirname, join } from "path";
 
 export interface DiscordMsgRow {
   message_id: string;
@@ -68,9 +68,35 @@ CREATE INDEX IF NOT EXISTS idx_dm_author     ON discord_messages(author_id);
 
 const DEFAULT_ARCHIVE_DB = "/opt/Code/github.com/Soul-Brews-Studio/atlas-oracle/.maw/atlas-route/messages.sqlite";
 
-/** The archive DB that `download` and `channel delete`'s pre-delete backup write to. */
-export function archiveDbPath(): string {
-  return process.env.ATLAS_ROUTE_DB || DEFAULT_ARCHIVE_DB;
+/**
+ * Slug for a per-server archive file: the name up to its first " - " or " | ",
+ * "&" as "and", apostrophes dropped, lowercase ASCII words joined by "-".
+ * "Soul Brews - Brewing for Life" → soul-brews, "Cat Lab & Co" → cat-lab-and-co,
+ * "HUMAN SCHOOL | buildwithoracle.com" → human-school. A name with no ASCII
+ * letters (a Thai server name) becomes "guild".
+ */
+export function guildSlug(name?: string): string {
+  const slug = String(name ?? "").split(/\s+[-|]\s+/)[0]
+    .replace(/&/g, " and ").replace(/['’]/g, "").toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return slug || "guild";
+}
+
+/**
+ * The archive DB that `download` and `channel delete`'s pre-delete backup write
+ * to: one sqlite per server, <archive dir>/guilds/<guildId>-<slug>.sqlite. An
+ * existing file for the guild id is reused whatever its slug, so hand-named files
+ * keep their names. ATLAS_ROUTE_DB overrides this with one explicit store (bf
+ * sets it to the shared messages.sqlite).
+ */
+export function archiveDbFor(guildId: string | null | undefined, guildName?: string): string {
+  if (process.env.ATLAS_ROUTE_DB) return process.env.ATLAS_ROUTE_DB;
+  if (!guildId) throw new Error("this channel has no guild — set ATLAS_ROUTE_DB to choose a store for it");
+  const dir = join(dirname(DEFAULT_ARCHIVE_DB), "guilds");
+  const existing = existsSync(dir)
+    ? readdirSync(dir).find(f => f.startsWith(`${guildId}-`) && f.endsWith(".sqlite"))
+    : undefined;
+  return join(dir, existing ?? `${guildId}-${guildSlug(guildName)}.sqlite`);
 }
 
 /** Open (or create) the message store. The returned object owns the single DB handle. */

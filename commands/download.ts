@@ -16,9 +16,13 @@
  * <channel-name>-<channelId>.tar.gz. A channel id then includes its threads; a
  * guild id writes one blob per channel into <guild-name>-<guildId>/ with a
  * server.md index. See lib/channel-archive.ts.
+ *
+ * Rows go to the server's own archive DB, guilds/<guildId>-<slug>.sqlite next to
+ * the shared messages.sqlite (lib/discord-db.ts archiveDbFor); ATLAS_ROUTE_DB
+ * overrides that with one explicit store.
  */
 import { getGuild, getChannel, listGuilds } from "../lib/discord";
-import { openMessageStore, archiveDbPath } from "../lib/discord-db";
+import { openMessageStore, archiveDbFor } from "../lib/discord-db";
 import { walkGuild } from "../lib/download-guild";
 import { walkTarget } from "../lib/download-target";
 import { archiveChannel, archiveGuild, blobDir, logBlob } from "../lib/channel-archive";
@@ -65,6 +69,7 @@ export async function run(log: Log, token: string, args: string[]) {
     log("  no modes, no cursor file — idempotent full walk, safe to re-run any time");
     log(`  --out also writes <channel-name>-<channelId>.tar.gz (raw JSON + attachments + threads.md) to DIR, default ${blobDir()}`);
     log("        a guild id writes one per channel into <guild-name>-<guildId>/ plus server.md, server.json and server.sqlite");
+    log("  rows go to the server's own DB, .maw/atlas-route/guilds/<guildId>-<slug>.sqlite (ATLAS_ROUTE_DB overrides)");
     return;
   }
 
@@ -73,12 +78,25 @@ export async function run(log: Log, token: string, args: string[]) {
   if (outDir && args.some(a => a.startsWith("--max="))) throw new Error("--max can't be combined with --out — a blob is always the full history");
 
   const max = intArg(args, "--max", Number.POSITIVE_INFINITY);
-  const dbPath = archiveDbPath();
-  const store = openMessageStore(dbPath);
   const opts = { max, verbose: true };
 
+  // Resolve what <id> is first: the target DB is the server's own file.
+  const guild = await tryGetGuild(token, id);
+  const channel = guild ? null : await tryGetChannel(token, id);
+  if (!guild && !channel) {
+    log(`✗ "${id}" is not a guild, channel, or thread this bot can see.`);
+    const guilds = await listGuilds(token).catch(() => []);
+    if (Array.isArray(guilds) && guilds.length) {
+      log("  guilds this bot IS in:");
+      for (const g of guilds) log(`    ${g.id}  ${g.name}`);
+    }
+    return;
+  }
+  const owner = guild ?? (channel.guild_id ? await tryGetGuild(token, channel.guild_id) : null);
+  const dbPath = archiveDbFor(owner?.id ?? channel?.guild_id, owner?.name);
+  const store = openMessageStore(dbPath);
+
   try {
-    const guild = await tryGetGuild(token, id);
     if (guild) {
       if (outDir) {
         log(`download guild "${guild.name}" (${id}) → ${dbPath} + blobs in ${outDir}`);
@@ -90,17 +108,6 @@ export async function run(log: Log, token: string, args: string[]) {
       log(`download guild "${guild.name}" (${id}) → ${dbPath}`);
       const r = await walkGuild(log, token, store, id, opts);
       log(`done: ${r.channels} channel(s), ${r.threads} thread(s), ${r.fetched} fetched, ${r.inserted} new`);
-      return;
-    }
-
-    const channel = await tryGetChannel(token, id);
-    if (!channel) {
-      log(`✗ "${id}" is not a guild, channel, or thread this bot can see.`);
-      const guilds = await listGuilds(token).catch(() => []);
-      if (Array.isArray(guilds) && guilds.length) {
-        log("  guilds this bot IS in:");
-        for (const g of guilds) log(`    ${g.id}  ${g.name}`);
-      }
       return;
     }
 
