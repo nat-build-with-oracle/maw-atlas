@@ -18,7 +18,7 @@ function snowflakeToIso(id: string): string {
   return new Date(Number((BigInt(id) >> 22n) + DISCORD_EPOCH)).toISOString();
 }
 
-function toRow(msg: any, dbChannelId: string, guildId: string | null, dbThreadId: string | null): DiscordMsgRow {
+export function toRow(msg: any, dbChannelId: string, guildId: string | null, dbThreadId: string | null): DiscordMsgRow {
   return {
     message_id: msg.id,
     channel_id: dbChannelId,

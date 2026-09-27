@@ -28,7 +28,7 @@ export const meta: CommandMeta = {
   name: "download",
   help: [
     "download <guildId|channelId|threadId> [--max=N]   explicit full download, no cursor, idempotent",
-    "download <guildId|channelId|threadId> --out[=DIR]   + blobs: raw JSON, attachments, threads.md (.tar.gz per channel; server.md for a guild)",
+    "download <guildId|channelId|threadId> --out[=DIR]   + blobs: raw JSON, attachments, threads.md (.tar.gz per channel; server.md + server.sqlite for a guild)",
   ].join("\n"),
 };
 
@@ -64,7 +64,7 @@ export async function run(log: Log, token: string, args: string[]) {
     log("  auto-detects the id's type — whole guild (channels+threads), a single channel, or a single thread");
     log("  no modes, no cursor file — idempotent full walk, safe to re-run any time");
     log(`  --out also writes <channel-name>-<channelId>.tar.gz (raw JSON + attachments + threads.md) to DIR, default ${blobDir()}`);
-    log("        a guild id writes one per channel into <guild-name>-<guildId>/ plus server.md and server.json");
+    log("        a guild id writes one per channel into <guild-name>-<guildId>/ plus server.md, server.json and server.sqlite");
     return;
   }
 
@@ -84,7 +84,7 @@ export async function run(log: Log, token: string, args: string[]) {
         log(`download guild "${guild.name}" (${id}) → ${dbPath} + blobs in ${outDir}`);
         const r = await archiveGuild(log, token, store, guild, outDir);
         log(`done: ${r.archived} channel(s)${r.noAccess ? `, ${r.noAccess} no access` : ""}, ${r.messages} messages, ${r.attachments} attachments (${(r.bytes / 1048576).toFixed(1)} MB), ${r.threads} thread(s)`);
-        log(`server: ${r.dir}/server.md`);
+        log(`server: ${r.dir}/server.md · ${r.sqlite}`);
         return;
       }
       log(`download guild "${guild.name}" (${id}) → ${dbPath}`);

@@ -18,10 +18,11 @@
  *                    can serve a converted file (e.g. webp listed, png served), so a size that
  *                    differs from Discord's is recorded (discord_size) and warned, not fatal
  */
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { basename, join } from "path";
 import { getGuildChannels } from "./discord";
+import { buildServerDb } from "./server-db";
 import { listActiveThreads, listArchivedThreads } from "./discord-threads";
 import { walkTarget } from "./download-target";
 import type { MessageStore } from "./discord-db";
@@ -283,6 +284,7 @@ export interface GuildArchiveResult {
   attachments: number;
   threads: number;
   bytes: number;
+  sqlite?: string;
 }
 
 /**
@@ -292,6 +294,9 @@ export interface GuildArchiveResult {
  * (the guild object and raw channel list, categories included). A channel the bot
  * cannot read (403) is listed as "no access" in both, never silently skipped; any
  * other failure aborts the run.
+ *
+ * server.sqlite (lib/server-db.ts) is then built from the blobs; server.md is
+ * written last and marks the run finished.
  *
  * Resume: a guild folder without server.md is an unfinished run. Re-running into
  * it keeps every channel blob that is already there and still readable (its
@@ -316,7 +321,17 @@ export async function archiveGuild(
   const resuming = existsSync(dir) && !existsSync(join(dir, "server.md"));
   if (existsSync(dir) && !resuming) dir += `-${stamp()}`;
   mkdirSync(dir, { recursive: true });
-  if (resuming) log(`  resuming unfinished run in ${dir}`);
+  if (resuming) {
+    log(`  resuming unfinished run in ${dir}`);
+    // A sub-folder is a channel blob's staging dir from a run that was killed
+    // mid-channel (a finished blob is only ever a .tar.gz) — drop it and redo that channel.
+    for (const f of readdirSync(dir)) {
+      if (statSync(join(dir, f)).isDirectory()) {
+        rmSync(join(dir, f), { recursive: true, force: true });
+        log(`  removed unfinished staging dir ${f}/`);
+      }
+    }
+  }
 
   const rows: { ch: any; r?: ArchiveResult; error?: string }[] = [];
   for (const [i, ch] of targets.entries()) {
@@ -351,28 +366,6 @@ export async function archiveGuild(
     bytes: sum(r => r.blob!.bytes),
   };
 
-  const typeName: Record<number, string> = { 0: "text", 2: "voice", 5: "announcement", 13: "stage", 15: "forum", 16: "media" };
-  const cell = (s: unknown) => String(s ?? "").replace(/\|/g, "\\|");
-  const md = [
-    `# ${guild.name} (${guild.id})`,
-    "",
-    `exported ${new Date().toISOString()} by maw atlas download --out`,
-    "",
-    `- channels archived: ${result.archived}${result.noAccess ? ` · no access: ${result.noAccess}` : ""}`,
-    `- messages: ${result.messages} · attachments: ${result.attachments} (${(result.bytes / 1048576).toFixed(1)} MB) · threads: ${result.threads}`,
-    "",
-    "Each channel is its own .tar.gz — open it for messages.jsonl, attachments/, threads.md and manifest.json.",
-    "",
-    "| category | channel | id | type | messages | attachments | threads | file |",
-    "|---|---|---|---|---|---|---|---|",
-    ...rows.map(({ ch, r, error }) => [
-      cell(ch.parent_id ? byId.get(ch.parent_id)?.name : ""), cell(ch.name), ch.id, typeName[ch.type] ?? ch.type,
-      r ? r.blob!.messages : "-", r ? r.blob!.attachments : "-",
-      r ? `${r.threads}${r.privateThreads === "no access (403)" ? " (private: no access)" : ""}` : "-",
-      r ? cell(basename(r.blob!.path)) : error,
-    ].join(" | ")).map(line => `| ${line} |`),
-  ].join("\n") + "\n";
-  writeFileSync(join(dir, "server.md"), md);
   writeFileSync(join(dir, "server.json"), JSON.stringify({
     format: "maw-atlas-guild-archive/1",
     exported_at: new Date().toISOString(),
@@ -384,6 +377,34 @@ export async function archiveGuild(
       threads: r?.threads ?? null, private_threads: r?.privateThreads ?? null,
     })),
   }, null, 2));
+  const sdb = buildServerDb(dir);
+  result.sqlite = sdb.path;
+  log(`  server.sqlite: ${sdb.messages} messages, ${sdb.channels} channels, ${sdb.threads} threads`);
+
+  const typeName: Record<number, string> = { 0: "text", 2: "voice", 5: "announcement", 13: "stage", 15: "forum", 16: "media" };
+  const cell = (s: unknown) => String(s ?? "").replace(/\|/g, "\\|");
+  const md = [
+    `# ${guild.name} (${guild.id})`,
+    "",
+    `exported ${new Date().toISOString()} by maw atlas download --out`,
+    "",
+    `- channels archived: ${result.archived}${result.noAccess ? ` · no access: ${result.noAccess}` : ""}`,
+    `- messages: ${result.messages} · attachments: ${result.attachments} (${(result.bytes / 1048576).toFixed(1)} MB) · threads: ${result.threads}`,
+    "",
+    "Each channel is its own .tar.gz — open it for messages.jsonl, attachments/, threads.md and manifest.json.",
+    "server.sqlite holds every message (with raw_json) and a channels table naming every category, channel and thread.",
+    "",
+    "| category | channel | id | type | messages | attachments | threads | file |",
+    "|---|---|---|---|---|---|---|---|",
+    ...rows.map(({ ch, r, error }) => [
+      cell(ch.parent_id ? byId.get(ch.parent_id)?.name : ""), cell(ch.name), ch.id, typeName[ch.type] ?? ch.type,
+      r ? r.blob!.messages : "-", r ? r.blob!.attachments : "-",
+      r ? `${r.threads}${r.privateThreads === "no access (403)" ? " (private: no access)" : ""}` : "-",
+      r ? cell(basename(r.blob!.path)) : error,
+    ].join(" | ")).map(line => `| ${line} |`),
+  ].join("\n") + "\n";
+  // server.md last: its presence marks the run finished (see resume above).
+  writeFileSync(join(dir, "server.md"), md);
   return result;
 }
 
