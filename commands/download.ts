@@ -12,7 +12,7 @@
  * (atlas-oracle repo) — settled via /grill-me, 2026-08-14.
  */
 import { getGuild, getChannel, listGuilds } from "../lib/discord";
-import { openMessageStore } from "../lib/discord-db";
+import { openMessageStore, archiveDbPath } from "../lib/discord-db";
 import { walkGuild } from "../lib/download-guild";
 import { walkTarget } from "../lib/download-target";
 import type { CommandMeta, Log } from "../lib/command-types";
@@ -21,8 +21,6 @@ export const meta: CommandMeta = {
   name: "download",
   help: "download <guildId|channelId|threadId> [--max=N]   explicit full download, no cursor, idempotent",
 };
-
-const DEFAULT_DB = "/opt/Code/github.com/Soul-Brews-Studio/atlas-oracle/.maw/atlas-route/messages.sqlite";
 
 function intArg(args: string[], name: string, def: number): number {
   const hit = args.find(a => a.startsWith(`${name}=`));
@@ -58,7 +56,7 @@ export async function run(log: Log, token: string, args: string[]) {
   }
 
   const max = intArg(args, "--max", Number.POSITIVE_INFINITY);
-  const dbPath = process.env.ATLAS_ROUTE_DB || DEFAULT_DB;
+  const dbPath = archiveDbPath();
   const store = openMessageStore(dbPath);
   const opts = { max, verbose: true };
 

@@ -66,6 +66,13 @@ CREATE INDEX IF NOT EXISTS idx_dm_thread     ON discord_messages(thread_id);
 CREATE INDEX IF NOT EXISTS idx_dm_author     ON discord_messages(author_id);
 `;
 
+const DEFAULT_ARCHIVE_DB = "/opt/Code/github.com/Soul-Brews-Studio/atlas-oracle/.maw/atlas-route/messages.sqlite";
+
+/** The archive DB that `download` and `channel delete`'s pre-delete backup write to. */
+export function archiveDbPath(): string {
+  return process.env.ATLAS_ROUTE_DB || DEFAULT_ARCHIVE_DB;
+}
+
 /** Open (or create) the message store. The returned object owns the single DB handle. */
 export function openMessageStore(dbPath: string): MessageStore {
   mkdirSync(dirname(dbPath), { recursive: true });
