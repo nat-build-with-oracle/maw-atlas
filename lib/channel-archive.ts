@@ -6,7 +6,8 @@
  * The blob exists because the sqlite archive keeps a reduced row per message
  * (no embeds, replies, reactions) and only attachment URLs — Discord CDN URLs
  * are signed, expire, and die with the channel. `channel delete --yes` writes
- * one before deleting; `download <channel|thread> --out` writes one on demand.
+ * one before deleting; `download <channel|thread> --out` writes one on demand, and
+ * `download <guild> --out` writes one per channel plus a server.md index (archiveGuild).
  *
  * Blob layout (<channel-name>-<channelId>.tar.gz; -<UTC stamp> is appended
  * instead of overwriting when that name already exists):
@@ -19,7 +20,8 @@
  */
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "fs";
 import { homedir } from "os";
-import { join } from "path";
+import { basename, join } from "path";
+import { getGuildChannels } from "./discord";
 import { listActiveThreads, listArchivedThreads } from "./discord-threads";
 import { walkTarget } from "./download-target";
 import type { MessageStore } from "./discord-db";
@@ -28,6 +30,25 @@ import type { Log } from "./command-types";
 // Channel types with their own top-level message history: text, voice (text-in-voice),
 // announcement, stage. Forum/media channels hold only thread posts — see download-guild.ts.
 const MESSAGE_TYPES = new Set([0, 2, 5, 13]);
+// Channel types that can parent threads: text, announcement, forum, media.
+const THREAD_PARENT_TYPES = new Set([0, 5, 15, 16]);
+// Everything a guild download archives — categories hold nothing of their own.
+const GUILD_ARCHIVE_TYPES = new Set([0, 2, 5, 13, 15, 16]);
+
+type PrivateThreads = "included" | "no access (403)" | "n/a";
+
+function isForbidden(e: unknown): boolean {
+  return /\s403\s/.test(e instanceof Error ? e.message : String(e));
+}
+
+/** Keep the real name (emoji, Thai, …) — only strip what a filename can't hold. */
+function safeName(name: unknown, fallback: string): string {
+  return String(name ?? fallback).replace(/[\/\\:\s\x00-\x1f]+/g, "_") || fallback;
+}
+
+function stamp(): string {
+  return new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
+}
 
 /**
  * Default blob directory. Deliberately outside any repo checkout — blobs hold
@@ -50,6 +71,7 @@ export interface BlobResult {
 
 export interface ArchiveResult {
   threads: number;
+  privateThreads: PrivateThreads;
   fetched: number;
   inserted: number;
   blob?: BlobResult;
@@ -62,16 +84,30 @@ export function logBlob(log: Log, b: BlobResult) {
   for (const line of b.threadsNote.trimEnd().split("\n")) log(`  ${line}`);
 }
 
-/** Active (guild-wide call, filtered to this parent) + archived public threads, deduped. */
-async function threadsUnder(token: string, ch: any): Promise<any[]> {
+/**
+ * Active (guild-wide call, filtered to this parent) + archived public + archived
+ * private threads, deduped. Private needs Manage Threads; without it the gap is
+ * reported (threads.md, server.md), never silently dropped.
+ */
+async function threadsUnder(token: string, ch: any): Promise<{ threads: any[]; privateThreads: PrivateThreads }> {
+  if (!THREAD_PARENT_TYPES.has(ch.type)) return { threads: [], privateThreads: "n/a" };
   const active = (await listActiveThreads(token, ch.guild_id)).filter(t => t.parent_id === ch.id);
   const archived = await listArchivedThreads(token, ch.id);
+  let priv: any[] = [];
+  let privateThreads: PrivateThreads = "included";
+  try {
+    priv = await listArchivedThreads(token, ch.id, "private");
+  } catch (e) {
+    if (!isForbidden(e)) throw e;
+    privateThreads = "no access (403)";
+  }
   const seen = new Set<string>();
-  return [...active, ...archived].filter(t => {
+  const threads = [...active, ...archived, ...priv].filter(t => {
     if (!t?.id || seen.has(t.id)) return false;
     seen.add(t.id);
     return true;
   });
+  return { threads, privateThreads };
 }
 
 export async function archiveChannel(
@@ -80,7 +116,9 @@ export async function archiveChannel(
   const isThread = !!ch.thread_metadata;
   if (isThread && !ch.parent_id) throw new Error(`thread ${ch.id} has no parent_id — refusing to guess`);
 
-  const threads = isThread ? [] : await threadsUnder(token, ch);
+  const { threads, privateThreads } = isThread
+    ? { threads: [] as any[], privateThreads: "n/a" as PrivateThreads }
+    : await threadsUnder(token, ch);
   const targets: { fetchId: string; dbChannelId: string; dbThreadId: string | null }[] = isThread
     ? [{ fetchId: ch.id, dbChannelId: ch.parent_id, dbThreadId: ch.id }]
     : [
@@ -88,9 +126,9 @@ export async function archiveChannel(
         ...threads.map(t => ({ fetchId: t.id, dbChannelId: ch.id, dbThreadId: t.id })),
       ];
 
-  const blob = outDir ? new ChannelBlob(outDir, ch, threads) : null;
+  const blob = outDir ? new ChannelBlob(outDir, ch, threads, privateThreads) : null;
   const opts = { max: Number.POSITIVE_INFINITY, verbose: false, onMessage: blob ? (m: any) => blob.add(m) : undefined };
-  const result: ArchiveResult = { threads: threads.length, fetched: 0, inserted: 0 };
+  const result: ArchiveResult = { threads: threads.length, privateThreads, fetched: 0, inserted: 0 };
   try {
     for (const t of targets) {
       const r = await walkTarget(token, store, t.fetchId, t.dbChannelId, t.dbThreadId, ch.guild_id ?? null, opts);
@@ -114,13 +152,12 @@ class ChannelBlob {
   /** message count per Discord channel id — the channel itself or one of its threads */
   private readonly counts = new Map<string, number>();
 
-  constructor(private readonly outDir: string, private readonly channel: any, private readonly threads: any[]) {
-    // Keep the real channel name (emoji, Thai, …) — only strip what a filename can't hold.
-    const safeName = String(channel.name ?? "channel").replace(/[\/\\:\s\x00-\x1f]+/g, "_");
-    let name = `${safeName}-${channel.id}`;
-    if (existsSync(join(outDir, `${name}.tar.gz`)) || existsSync(join(outDir, name))) {
-      name += `-${new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z")}`;
-    }
+  constructor(
+    private readonly outDir: string, private readonly channel: any,
+    private readonly threads: any[], private readonly privateThreads: PrivateThreads,
+  ) {
+    let name = `${safeName(channel.name, "channel")}-${channel.id}`;
+    if (existsSync(join(outDir, `${name}.tar.gz`)) || existsSync(join(outDir, name))) name += `-${stamp()}`;
     this.name = name;
     this.dir = join(outDir, this.name);
     this.tarball = join(outDir, `${this.name}.tar.gz`);
@@ -142,15 +179,16 @@ class ChannelBlob {
       "",
       `- channel messages: ${this.counts.get(c.id) ?? 0}`,
       `- threads: ${this.threads.length}`,
+      `- private archived threads: ${this.privateThreads}`,
       "",
     ];
     if (!this.threads.length) {
       out.push("No threads inside.");
     } else {
-      out.push("| thread | id | messages | archived | created |", "|---|---|---|---|---|");
+      out.push("| thread | id | messages | private | archived | created |", "|---|---|---|---|---|---|");
       for (const t of this.threads) {
         const created = t.thread_metadata?.create_timestamp ?? "";
-        out.push(`| ${String(t.name).replace(/\|/g, "\\|")} | ${t.id} | ${this.counts.get(t.id) ?? 0} | ${t.thread_metadata?.archived ? "yes" : "no"} | ${created} |`);
+        out.push(`| ${String(t.name).replace(/\|/g, "\\|")} | ${t.id} | ${this.counts.get(t.id) ?? 0} | ${t.type === 12 ? "yes" : "no"} | ${t.thread_metadata?.archived ? "yes" : "no"} | ${created} |`);
       }
     }
     return out.join("\n") + "\n";
@@ -191,6 +229,7 @@ class ChannelBlob {
       exported_at: new Date().toISOString(),
       channel: this.channel,
       threads: this.threads,
+      private_threads: this.privateThreads,
       messages: this.lines.length,
       attachments: files,
     }, null, 2));
@@ -214,4 +253,103 @@ class ChannelBlob {
     rmSync(this.dir, { recursive: true });
     return { path: tarball, messages: this.lines.length, attachments: files.length, bytes, resized, threadsNote };
   }
+}
+
+export interface GuildArchiveResult {
+  dir: string;
+  archived: number;
+  noAccess: number;
+  messages: number;
+  attachments: number;
+  threads: number;
+  bytes: number;
+}
+
+/**
+ * Archive a whole guild: one blob per channel (text, voice text-chat, announcement,
+ * stage, forum, media) into <outDir>/<guild-name>-<guildId>/, plus server.md (a
+ * human index of every channel, its threads count and its file) and server.json
+ * (the guild object and raw channel list, categories included). A channel the bot
+ * cannot read (403) is listed as "no access" in both, never silently skipped; any
+ * other failure aborts the run.
+ */
+export async function archiveGuild(
+  log: Log, token: string, store: MessageStore, guild: any, outDir: string,
+): Promise<GuildArchiveResult> {
+  const channels: any[] = await getGuildChannels(token, guild.id);
+  const byId = new Map(channels.map(c => [c.id, c]));
+  // Sidebar order: uncategorised first, then by category position; inside a
+  // category text-like channels before voice/stage, then by channel position.
+  const catPos = (c: any) => (c.parent_id ? byId.get(c.parent_id)?.position ?? 0 : -1);
+  const isVoice = (c: any) => (c.type === 2 || c.type === 13 ? 1 : 0);
+  const targets = channels
+    .filter(c => GUILD_ARCHIVE_TYPES.has(c.type))
+    .sort((a, b) => catPos(a) - catPos(b) || String(a.parent_id ?? "").localeCompare(String(b.parent_id ?? ""))
+      || isVoice(a) - isVoice(b) || a.position - b.position);
+
+  let dir = join(outDir, `${safeName(guild.name, "guild")}-${guild.id}`);
+  if (existsSync(dir)) dir += `-${stamp()}`;
+  mkdirSync(dir, { recursive: true });
+
+  const rows: { ch: any; r?: ArchiveResult; error?: string }[] = [];
+  for (const [i, ch] of targets.entries()) {
+    const tag = `[${i + 1}/${targets.length}] #${ch.name}`;
+    try {
+      const r = await archiveChannel(token, store, ch, dir);
+      rows.push({ ch, r });
+      const b = r.blob!;
+      log(`  ✓ ${tag}: ${b.messages} msg, ${b.attachments} att, ${r.threads} thread(s)${r.privateThreads === "no access (403)" ? ", private threads: no access" : ""}`);
+    } catch (e) {
+      if (!isForbidden(e)) throw e;
+      rows.push({ ch, error: "no access (403)" });
+      log(`  ⚠ ${tag}: no access (403) — listed in server.md, not archived`);
+    }
+  }
+
+  const done = rows.filter(x => x.r);
+  const sum = (f: (r: ArchiveResult) => number) => done.reduce((n, x) => n + f(x.r!), 0);
+  const result: GuildArchiveResult = {
+    dir,
+    archived: done.length,
+    noAccess: rows.length - done.length,
+    messages: sum(r => r.blob!.messages),
+    attachments: sum(r => r.blob!.attachments),
+    threads: sum(r => r.threads),
+    bytes: sum(r => r.blob!.bytes),
+  };
+
+  const typeName: Record<number, string> = { 0: "text", 2: "voice", 5: "announcement", 13: "stage", 15: "forum", 16: "media" };
+  const cell = (s: unknown) => String(s ?? "").replace(/\|/g, "\\|");
+  const md = [
+    `# ${guild.name} (${guild.id})`,
+    "",
+    `exported ${new Date().toISOString()} by maw atlas download --out`,
+    "",
+    `- channels archived: ${result.archived}${result.noAccess ? ` · no access: ${result.noAccess}` : ""}`,
+    `- messages: ${result.messages} · attachments: ${result.attachments} (${(result.bytes / 1048576).toFixed(1)} MB) · threads: ${result.threads}`,
+    "",
+    "Each channel is its own .tar.gz — open it for messages.jsonl, attachments/, threads.md and manifest.json.",
+    "",
+    "| category | channel | id | type | messages | attachments | threads | file |",
+    "|---|---|---|---|---|---|---|---|",
+    ...rows.map(({ ch, r, error }) => [
+      cell(ch.parent_id ? byId.get(ch.parent_id)?.name : ""), cell(ch.name), ch.id, typeName[ch.type] ?? ch.type,
+      r ? r.blob!.messages : "-", r ? r.blob!.attachments : "-",
+      r ? `${r.threads}${r.privateThreads === "no access (403)" ? " (private: no access)" : ""}` : "-",
+      r ? cell(basename(r.blob!.path)) : error,
+    ].join(" | ")).map(line => `| ${line} |`),
+  ].join("\n") + "\n";
+  writeFileSync(join(dir, "server.md"), md);
+  writeFileSync(join(dir, "server.json"), JSON.stringify({
+    format: "maw-atlas-guild-archive/1",
+    exported_at: new Date().toISOString(),
+    guild,
+    channels,
+    results: rows.map(({ ch, r, error }) => ({
+      channel_id: ch.id, file: r ? basename(r.blob!.path) : null, error: error ?? null,
+      messages: r?.blob?.messages ?? null, attachments: r?.blob?.attachments ?? null,
+      threads: r?.threads ?? null, private_threads: r?.privateThreads ?? null,
+    })),
+  }, null, 2));
+  return result;
 }
