@@ -292,6 +292,11 @@ export interface GuildArchiveResult {
  * (the guild object and raw channel list, categories included). A channel the bot
  * cannot read (403) is listed as "no access" in both, never silently skipped; any
  * other failure aborts the run.
+ *
+ * Resume: a guild folder without server.md is an unfinished run. Re-running into
+ * it keeps every channel blob that is already there and still readable (its
+ * manifest.json extracts cleanly) and archives only the rest. A finished folder
+ * is never touched — a new run gets a UTC-stamped folder instead.
  */
 export async function archiveGuild(
   log: Log, token: string, store: MessageStore, guild: any, outDir: string,
@@ -308,12 +313,20 @@ export async function archiveGuild(
       || isVoice(a) - isVoice(b) || a.position - b.position);
 
   let dir = join(outDir, `${safeName(guild.name, "guild")}-${guild.id}`);
-  if (existsSync(dir)) dir += `-${stamp()}`;
+  const resuming = existsSync(dir) && !existsSync(join(dir, "server.md"));
+  if (existsSync(dir) && !resuming) dir += `-${stamp()}`;
   mkdirSync(dir, { recursive: true });
+  if (resuming) log(`  resuming unfinished run in ${dir}`);
 
   const rows: { ch: any; r?: ArchiveResult; error?: string }[] = [];
   for (const [i, ch] of targets.entries()) {
     const tag = `[${i + 1}/${targets.length}] #${ch.name}`;
+    const kept = resuming ? keptBlob(dir, ch) : null;
+    if (kept) {
+      rows.push({ ch, r: kept });
+      log(`  ↺ ${tag}: kept from the earlier run — ${kept.blob!.messages} msg, ${kept.blob!.attachments} att`);
+      continue;
+    }
     try {
       const r = await archiveChannel(token, store, ch, dir);
       rows.push({ ch, r });
@@ -372,4 +385,27 @@ export async function archiveGuild(
     })),
   }, null, 2));
   return result;
+}
+
+/** A channel blob an earlier, unfinished guild run already wrote — only if its manifest reads back cleanly. */
+function keptBlob(dir: string, ch: any): ArchiveResult | null {
+  const name = `${safeName(ch.name, "channel")}-${ch.id}`;
+  const path = join(dir, `${name}.tar.gz`);
+  if (!existsSync(path)) return null;
+  const out = Bun.spawnSync(["tar", "-xzOf", path, `${name}/manifest.json`]);
+  if (out.exitCode !== 0) return null;
+  const m = JSON.parse(out.stdout.toString());
+  const atts: any[] = m.attachments ?? [];
+  return {
+    threads: (m.threads ?? []).length,
+    privateThreads: m.private_threads ?? "n/a",
+    fetched: 0,
+    inserted: 0,
+    blob: {
+      path, messages: m.messages, attachments: atts.length,
+      bytes: atts.reduce((n, a) => n + (a.size ?? 0), 0),
+      resized: atts.filter(a => "discord_size" in a).length,
+      threadsNote: "",
+    },
+  };
 }
