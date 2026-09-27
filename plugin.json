@@ -1,6 +1,6 @@
 {
   "name": "atlas",
-  "version": "26.8.7-1324",
+  "version": "26.9.28-0457",
   "entry": "./index.ts",
   "sdk": "^1.0.0",
   "description": "Discord fleet infrastructure — manage bots, channels, guilds, permissions, backfill messages",
@@ -9,7 +9,7 @@
   "cli": {
     "command": "atlas",
     "aliases": ["at"],
-    "help": "maw atlas <ls|read|backfill|check|wake|vesicle> — Discord fleet ops"
+    "help": "maw atlas <ls|read|download|channel|backfill|check|wake|vesicle> — Discord fleet ops"
   },
   "weight": 50,
   "runtime": "bun-dev",
