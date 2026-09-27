@@ -15,6 +15,7 @@ maw atlas read <channel-id> --all --since 2026-08-01 --before 2026-08-06
 maw atlas backfill [--all]           # backfill message history
 maw atlas download <guildId|channelId|threadId> [--max=N]   # explicit full download, no cursor
 maw atlas download <channelId|threadId> --out[=DIR]   # + <channel-name>-<channelId>.tar.gz: raw JSON, attachments, threads.md
+maw atlas download <guildId> --out[=DIR]   # whole server: one .tar.gz per channel + server.md + server.sqlite
 maw atlas channel create <guildId> <name> [--type=N] [--parent=<categoryId>]
 maw atlas channel delete <id|#name>...          # dry run: lists what would be deleted
 maw atlas channel delete <id|#name>... --yes    # archive DB + .tar.gz blob (default ~/.maw/atlas-blobs), then delete

@@ -13,15 +13,18 @@ export async function listActiveThreads(token: string, guildId: string): Promise
 }
 
 /**
- * Archived public threads for one channel. Paginated via `before` = the last
+ * Archived threads for one channel — public by default; "private" needs Manage
+ * Threads (a 403 without it). Paginated via `before` = the last
  * thread's `thread_metadata.archive_timestamp` (an ISO8601 string, NOT a snowflake —
  * this endpoint's cursor semantics differ from the message-history `before=`).
  */
-export async function listArchivedThreads(token: string, channelId: string): Promise<any[]> {
+export async function listArchivedThreads(
+  token: string, channelId: string, visibility: "public" | "private" = "public",
+): Promise<any[]> {
   const all: any[] = [];
   let before: string | undefined;
   for (;;) {
-    let path = `/channels/${channelId}/threads/archived/public?limit=100`;
+    let path = `/channels/${channelId}/threads/archived/${visibility}?limit=100`;
     if (before) path += `&before=${encodeURIComponent(before)}`;
     const res = await request(path, token);
     const threads = Array.isArray(res?.threads) ? res.threads : [];

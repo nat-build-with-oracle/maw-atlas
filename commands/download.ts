@@ -11,23 +11,24 @@
  * Full spec: ψ/incubate/nat-build-with-oracle/maw-atlas/SPEC-download-command.md
  * (atlas-oracle repo) — settled via /grill-me, 2026-08-14.
  *
- * --out[=DIR] (channel or thread only): also write a self-contained blob — raw
- * Discord JSON, attachment bytes, and a threads.md listing every thread inside —
- * as <channel-name>-<channelId>.tar.gz. A channel id then includes its threads.
- * See lib/channel-archive.ts.
+ * --out[=DIR]: also write self-contained blobs — raw Discord JSON, attachment
+ * bytes, and a threads.md listing every thread inside — as
+ * <channel-name>-<channelId>.tar.gz. A channel id then includes its threads; a
+ * guild id writes one blob per channel into <guild-name>-<guildId>/ with a
+ * server.md index. See lib/channel-archive.ts.
  */
 import { getGuild, getChannel, listGuilds } from "../lib/discord";
 import { openMessageStore, archiveDbPath } from "../lib/discord-db";
 import { walkGuild } from "../lib/download-guild";
 import { walkTarget } from "../lib/download-target";
-import { archiveChannel, blobDir, logBlob } from "../lib/channel-archive";
+import { archiveChannel, archiveGuild, blobDir, logBlob } from "../lib/channel-archive";
 import type { CommandMeta, Log } from "../lib/command-types";
 
 export const meta: CommandMeta = {
   name: "download",
   help: [
     "download <guildId|channelId|threadId> [--max=N]   explicit full download, no cursor, idempotent",
-    "download <channelId|threadId> --out[=DIR]   + blob: raw JSON, attachments, threads.md (.tar.gz)",
+    "download <guildId|channelId|threadId> --out[=DIR]   + blobs: raw JSON, attachments, threads.md (.tar.gz per channel; server.md + server.sqlite for a guild)",
   ].join("\n"),
 };
 
@@ -59,10 +60,11 @@ export async function run(log: Log, token: string, args: string[]) {
   const id = args[1];
   if (!id || !/^\d{17,20}$/.test(id)) {
     log("usage: maw atlas download <guildId|channelId|threadId> [--max=N]");
-    log("       maw atlas download <channelId|threadId> --out[=DIR]");
+    log("       maw atlas download <guildId|channelId|threadId> --out[=DIR]");
     log("  auto-detects the id's type — whole guild (channels+threads), a single channel, or a single thread");
     log("  no modes, no cursor file — idempotent full walk, safe to re-run any time");
     log(`  --out also writes <channel-name>-<channelId>.tar.gz (raw JSON + attachments + threads.md) to DIR, default ${blobDir()}`);
+    log("        a guild id writes one per channel into <guild-name>-<guildId>/ plus server.md, server.json and server.sqlite");
     return;
   }
 
@@ -78,7 +80,13 @@ export async function run(log: Log, token: string, args: string[]) {
   try {
     const guild = await tryGetGuild(token, id);
     if (guild) {
-      if (outDir) throw new Error("--out exports one channel or thread, not a whole guild");
+      if (outDir) {
+        log(`download guild "${guild.name}" (${id}) → ${dbPath} + blobs in ${outDir}`);
+        const r = await archiveGuild(log, token, store, guild, outDir);
+        log(`done: ${r.archived} channel(s)${r.noAccess ? `, ${r.noAccess} no access` : ""}, ${r.messages} messages, ${r.attachments} attachments (${(r.bytes / 1048576).toFixed(1)} MB), ${r.threads} thread(s)`);
+        log(`server: ${r.dir}/server.md · ${r.sqlite}`);
+        return;
+      }
       log(`download guild "${guild.name}" (${id}) → ${dbPath}`);
       const r = await walkGuild(log, token, store, id, opts);
       log(`done: ${r.channels} channel(s), ${r.threads} thread(s), ${r.fetched} fetched, ${r.inserted} new`);
