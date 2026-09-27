@@ -41,9 +41,29 @@ function isForbidden(e: unknown): boolean {
   return /\s403\s/.test(e instanceof Error ? e.message : String(e));
 }
 
-/** Keep the real name (emoji, Thai, …) — only strip what a filename can't hold. */
+/**
+ * Clip to a byte budget, keeping a short extension. Filesystems cap one path
+ * component at 255 bytes, and Discord attachment names and Thai channel names
+ * (3 bytes a character) can exceed it. The original name stays in manifest.json.
+ */
+function clip(name: string, maxBytes: number): string {
+  const enc = new TextEncoder();
+  if (enc.encode(name).length <= maxBytes) return name;
+  const dot = name.lastIndexOf(".");
+  const ext = dot > 0 && name.length - dot <= 10 ? name.slice(dot) : "";
+  let budget = maxBytes - enc.encode(ext).length;
+  let base = "";
+  for (const ch of Array.from(name.slice(0, name.length - ext.length))) {
+    budget -= enc.encode(ch).length;
+    if (budget < 0) break;
+    base += ch;
+  }
+  return base + ext;
+}
+
+/** Keep the real name (emoji, Thai, …) — only strip what a filename can't hold, and clip it. */
 function safeName(name: unknown, fallback: string): string {
-  return String(name ?? fallback).replace(/[\/\\:\s\x00-\x1f]+/g, "_") || fallback;
+  return clip(String(name ?? fallback).replace(/[\/\\:\s\x00-\x1f]+/g, "_") || fallback, 150);
 }
 
 function stamp(): string {
@@ -211,7 +231,7 @@ class ChannelBlob {
       if (!data.length && att.size) throw new Error(`attachment ${att.id} (${att.filename}): empty body, Discord says ${att.size} bytes`);
       const sizeDiffers = typeof att.size === "number" && data.length !== att.size;
       if (sizeDiffers) resized++;
-      const rel = `attachments/${messageId}-${att.id}-${String(att.filename).replace(/[^\w.-]+/g, "_")}`;
+      const rel = `attachments/${messageId}-${att.id}-${clip(String(att.filename).replace(/[^\w.-]+/g, "_"), 150)}`;
       writeFileSync(join(this.dir, rel), data);
       bytes += data.length;
       files.push({
