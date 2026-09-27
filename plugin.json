@@ -1,6 +1,6 @@
 {
   "name": "atlas",
-  "version": "26.9.28-0457",
+  "version": "26.9.28-0528",
   "entry": "./index.ts",
   "sdk": "^1.0.0",
   "description": "Discord fleet infrastructure — manage bots, channels, guilds, permissions, backfill messages",
