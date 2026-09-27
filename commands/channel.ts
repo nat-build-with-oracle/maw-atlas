@@ -13,7 +13,7 @@
 import {
   listGuilds, getGuildChannels, getChannel, createChannel, deleteChannel, moveChannel,
 } from "../lib/discord";
-import { openMessageStore, archiveDbPath } from "../lib/discord-db";
+import { openMessageStore, archiveDbFor } from "../lib/discord-db";
 import { archiveChannel, blobDir, logBlob } from "../lib/channel-archive";
 import type { CommandMeta, Log } from "../lib/command-types";
 
@@ -125,24 +125,26 @@ async function del(log: Log, token: string, args: string[]) {
   for (const c of channels) log(`${yes ? "delete" : "would delete"} ${describe(c, guildNames)}`);
   if (!yes) {
     log(`dry run — nothing deleted. Re-run with --yes to delete ${channels.length} channel(s)` +
-      (noBackup ? " WITHOUT a backup." : `, each backed up first (archive DB + blob in ${outDir}).`));
+      (noBackup ? " WITHOUT a backup." : `, each backed up first (its server's archive DB + blob in ${outDir}).`));
     return;
   }
 
-  const store = noBackup ? null : openMessageStore(archiveDbPath());
-  try {
-    if (store) log(`backup → ${archiveDbPath()} + blob in ${outDir}`);
-    for (const c of channels) {
-      if (store) {
+  for (const c of channels) {
+    if (!noBackup) {
+      // Each channel backs up into its own server's DB (targets may span guilds).
+      const dbPath = archiveDbFor(c.guild_id, guildNames.get(c.guild_id));
+      const store = openMessageStore(dbPath);
+      try {
+        log(`backup #${c.name} → ${dbPath} + blob in ${outDir}`);
         const r = await archiveChannel(token, store, c, outDir);
         log(`  ↳ backed up #${c.name}: ${r.threads} thread(s), ${r.fetched} fetched, ${r.inserted} new`);
         logBlob(log, r.blob!);
+      } finally {
+        store.close();
       }
-      await deleteChannel(token, c.id, reason);
-      log(`✓ deleted #${c.name} (${c.id})`);
     }
-  } finally {
-    store?.close();
+    await deleteChannel(token, c.id, reason);
+    log(`✓ deleted #${c.name} (${c.id})`);
   }
 }
 
