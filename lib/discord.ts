@@ -23,7 +23,9 @@ function sleep(ms: number) {
 // 429s carry a Retry-After header (seconds, possibly fractional) — honor it,
 // capped at MAX_BACKOFF_MS, falling back to exponential backoff. 5xx retries
 // are GET-only: a replayed mutation could double-apply.
-export async function request(path: string, token: string, method = "GET", body?: any): Promise<any> {
+export async function request(
+  path: string, token: string, method = "GET", body?: any, extraHeaders?: Record<string, string>,
+): Promise<any> {
   for (let attempt = 0; ; attempt++) {
     const res = await fetch(`${API}${path}`, {
       method,
@@ -31,6 +33,7 @@ export async function request(path: string, token: string, method = "GET", body?
         Authorization: `Bot ${token}`,
         "Content-Type": "application/json",
         "User-Agent": UA,
+        ...extraHeaders,
       },
       body: body ? JSON.stringify(body) : undefined,
     });
@@ -84,8 +87,10 @@ export async function createChannel(token: string, guildId: string, name: string
   });
 }
 
-export async function deleteChannel(token: string, channelId: string) {
-  return request(`/channels/${channelId}`, token, "DELETE");
+// Discord requires the audit-log reason URL-encoded (it may carry non-ASCII text).
+export async function deleteChannel(token: string, channelId: string, reason?: string) {
+  const headers = reason ? { "X-Audit-Log-Reason": encodeURIComponent(reason) } : undefined;
+  return request(`/channels/${channelId}`, token, "DELETE", undefined, headers);
 }
 
 export async function moveChannel(token: string, channelId: string, parentId: string) {
