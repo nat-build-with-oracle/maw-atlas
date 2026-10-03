@@ -785,6 +785,7 @@ export async function routeMentions(log: Log, token: string, args: string[]) {
   const channelId = args[2];
   if (!channelId || !/^\d{17,20}$/.test(channelId)) {
     log("usage: maw atlas route mentions <channelId> [--dry-run] [--limit=N]");
+    if (!channelId) throw new Error("channelId is required for route mentions");
     return;
   }
   if (!token) { log("✗ no DISCORD_BOT_TOKEN — set env or `pass insert discord/atlas-oracle-token`"); return; }
@@ -937,6 +938,7 @@ export async function routeBackfill(log: Log, token: string, args: string[]) {
   const arg = args[2];
   if (!arg || (arg !== "all" && !/^\d{17,20}$/.test(arg))) {
     log("usage: maw atlas route backfill <channelId>|all [--full|--fresh|--newest]   (default: incremental cursor sweep; cap via ATLAS_BACKFILL_MAX)");
+    if (!arg) throw new Error("channelId or all is required for route backfill");
     return;
   }
   if (!token) { log("✗ no DISCORD_BOT_TOKEN — set env or `pass insert discord/atlas-oracle-token`"); return; }
