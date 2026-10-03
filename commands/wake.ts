@@ -30,7 +30,7 @@ import type { CommandMeta } from "../lib/command-types";
 
 export const meta: CommandMeta = {
   name: "wake",
-  help: "wake <bot> [host]           anchor-aware remote wake",
+  help: "wake <bot> [host]           anchor-aware remote wake (tmux-only)",
   tokenRequirement: "none",
 };
 

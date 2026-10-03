@@ -1,14 +1,16 @@
 import { listGuilds, getGuildChannels, createThread } from "../lib/discord";
+import { herdrAgents, resolveHerdrPane } from "../lib/herdr";
+import { routingPathForWrite, loadRoutingTable, writeJson, type RouteEntry } from "../lib/routing";
 import type { CommandMeta } from "../lib/command-types";
 
 export const meta: CommandMeta = {
   name: "team-threads",
   help: [
-    "team-threads sync [channel]  create threads for worktree agents",
-    "team-threads list [channel]  list agent threads",
+    "team-threads sync [channel] [--dry-run]  create threads for worktree agents",
+    "team-threads list [channel]              list agent threads",
   ].join("\n"),
   treeLines: [
-    "team-threads sync [channel]  create threads for worktree agents",
+    "team-threads sync [channel] [--dry-run]  create threads for worktree agents",
     "list [channel]          list agent threads",
   ],
 };
@@ -58,17 +60,33 @@ async function postMessage(token: string, channelId: string, content: string) {
   });
 }
 
+function parseAgentsFromCharter(file: string): string[] {
+  const { readFileSync } = require("fs");
+  const text = readFileSync(file, "utf8");
+  const agents: string[] = [];
+  const memberMatches = text.matchAll(/-\s+role:\s*([^\n]+)\n\s+name:\s*([^\s]+)/g);
+  for (const match of memberMatches) {
+    const role = match[1].trim();
+    const name = match[2].trim();
+    if (role.startsWith("codex") || name.includes("codex")) agents.push(name);
+  }
+  if (agents.length) return [...new Set(agents)];
+  return [...new Set([...text.matchAll(/name:\s*([^\s]+)/g)].map(m => m[1]).filter(name => name.includes("codex")))];
+}
+
 export async function teamThreads(log: (s: string) => void, token: string, args: string[]) {
   const sub = args[1];
-  const channel = args[2] || "102-atlas-oracle";
+  const rest = args.slice(2).filter(a => !a.startsWith("--"));
+  const channel = rest[0] || "102-atlas-oracle";
+  const dryRun = args.includes("--dry-run");
 
   if (!sub || sub === "help") {
     log("usage:");
-    log("  maw atlas team-threads sync [channel]    create threads for each worktree agent");
-    log("  maw atlas team-threads list [channel]    list agent threads");
-    log("  maw atlas team-threads clean [channel]   archive empty agent threads");
+    log("  maw atlas team-threads sync [channel] [--dry-run]  create threads for each worktree agent, record pane ids");
+    log("  maw atlas team-threads list [channel]               list agent threads");
     log("");
-    log("Reads .maw/teams/*.yaml to find team members, creates matching Discord threads.");
+    log("Sources live worktree agents from `maw herdr ls --agents --json`; falls back to");
+    log(".maw/teams/*.yaml charter agents when herdr reports none (non-herdr machine).");
     log("Default channel: 102-atlas-oracle");
     return;
   }
@@ -94,34 +112,74 @@ export async function teamThreads(log: (s: string) => void, token: string, args:
   }
 
   if (sub === "sync") {
-    const { readFileSync, existsSync } = require("fs");
+    // Scope is always this team's charter — herdr only changes HOW a pane id
+    // is found for each declared member, never WHICH agents get threaded.
+    // (A broader "every herdr worktree on the machine" source was tried and
+    // measured to fan out across every OTHER oracle's worktrees too — wrong.)
+    const { existsSync, readFileSync } = require("fs");
     const { resolve } = require("path");
-
     const charterPath = resolve(process.cwd(), ".maw/teams/atlas-m5.yaml");
     if (!existsSync(charterPath)) {
       log("✗ .maw/teams/atlas-m5.yaml not found"); return;
     }
-
-    const yaml = readFileSync(charterPath, "utf8");
-    const members = [...yaml.matchAll(/name:\s*(\S+)/g)].map(m => m[1]);
+    const members = parseAgentsFromCharter(charterPath);
     const agents = members.filter(n => n !== "atlas-oracle");
-
     const existingNames = new Set(allThreads.map((t: any) => t.name));
+    const routingTarget = routingPathForWrite(args);
+    const liveAgents = await herdrAgents();
 
-    let created = 0;
+    let created = 0, recorded = 0;
+    const routing = !dryRun && existsSync(routingTarget) ? loadRoutingTable(routingTarget) : {};
+
     for (const agent of agents) {
       const threadName = agent.replace("atlas-", "");
-      if (existingNames.has(threadName)) {
+      let pane: string | undefined;
+      let cwd: string | undefined;
+      if (liveAgents.length > 0) {
+        const resolved = await resolveHerdrPane(agent);
+        if (resolved.kind === "found") {
+          pane = resolved.pane;
+          cwd = liveAgents.find(a => a.pane === pane)?.cwd;
+        } else if (resolved.kind === "ambiguous") {
+          log(`  ⚠ ${agent}: herdr resolve ambiguous (${resolved.panes.join(", ")}) — not recording a pane`);
+        }
+      }
+
+      let thread = allThreads.find((t: any) => t.name === threadName);
+      if (thread) {
         log(`  ✓ #${threadName} exists`);
+      } else {
+        if (dryRun) {
+          log(`  + would create #${threadName}${pane ? ` → ${cwd} [${pane}]` : " (no live pane found)"}`);
+          continue;
+        }
+        thread = await createThread(token, channelId, threadName);
+        await joinThread(token, thread.id);
+        const body = cwd
+          ? `🌍 ${threadName} thread — worktree \`${cwd}\`\n\n— [m5:atlas]`
+          : `🌍 ${threadName} thread — worktree \`agents/1-${agent}/\`\n\n— [m5:atlas]`;
+        await postMessage(token, thread.id, body);
+        log(`  + #${threadName} created (${thread.id})`);
+        created++;
+      }
+
+      if (dryRun) {
+        if (pane) log(`  → would record ${thread?.id ?? "(new)"} → ${pane} [${threadName}]`);
         continue;
       }
-      const thread = await createThread(token, channelId, threadName);
-      await joinThread(token, thread.id);
-      await postMessage(token, thread.id, `🌍 ${threadName} thread — worktree \`agents/1-${agent}/\`\n\n— [m5:atlas]`);
-      log(`  + #${threadName} created (${thread.id})`);
-      created++;
+      if (pane) {
+        const entry: RouteEntry = { name: threadName, pane, agent };
+        routing[thread.id] = entry;
+        recorded++;
+      }
     }
-    log(`\n${created} created, ${agents.length - created} already existed`);
+
+    if (dryRun) {
+      log(`\n(dry-run) ${agents.length} charter agent(s) planned, nothing created or written`);
+      return;
+    }
+    if (recorded) writeJson(routingTarget, routing);
+    log(`\n${created} created, ${agents.length - created} already existed, ${recorded} pane(s) recorded${recorded ? ` → ${routingTarget}` : ""}`);
     return;
   }
 
