@@ -13,6 +13,7 @@ import { existsSync, lstatSync, readdirSync, readlinkSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 import { findAtlasRepo } from "../lib/repo";
+import { herdrAgents } from "../lib/herdr";
 import type { CommandMeta } from "../lib/command-types";
 
 export const meta: CommandMeta = {
@@ -53,19 +54,32 @@ export async function check(log: (s: string) => void, _token: string, args: stri
     fail(`${wtLines.length} worktrees (expected 1): ${wtLines.map(l => l.split(/\s+/)[0]).join(" ")}`);
   }
 
-  // 2. exactly one tmux window in the session
-  const hasSession = sh(`tmux has-session -t ${JSON.stringify(session)}`).ok;
-  if (hasSession) {
-    const winList = sh(`tmux list-windows -t ${JSON.stringify(session)}`);
-    const wins = winList.out ? winList.out.split("\n").filter(Boolean) : [];
-    if (wins.length === 1) {
-      pass(`1 tmux window in ${session}`);
+  // 2. exactly one live agent for this repo — herdr first, tmux as fallback
+  // only when herdr reports no agents at all (a genuinely non-herdr machine).
+  const liveAgents = await herdrAgents();
+  if (liveAgents.length > 0) {
+    const here = liveAgents.filter(a => a.cwd === repo || a.cwd.startsWith(`${repo}/`));
+    if (here.length === 1) {
+      pass(`1 herdr agent on this repo (${here[0].pane})`);
+    } else if (here.length === 0) {
+      fail(`no herdr agent found on ${repo}`);
     } else {
-      const names = sh(`tmux list-windows -t ${JSON.stringify(session)} -F '#{window_name}'`).out.split("\n").filter(Boolean).join(" ");
-      fail(`${wins.length} windows in ${session}: ${names}`);
+      fail(`${here.length} herdr agents on ${repo}: ${here.map(a => a.pane).join(" ")}`);
     }
   } else {
-    fail(`tmux session ${session} not found`);
+    const hasSession = sh(`tmux has-session -t ${JSON.stringify(session)}`).ok;
+    if (hasSession) {
+      const winList = sh(`tmux list-windows -t ${JSON.stringify(session)}`);
+      const wins = winList.out ? winList.out.split("\n").filter(Boolean) : [];
+      if (wins.length === 1) {
+        pass(`1 tmux window in ${session}`);
+      } else {
+        const names = sh(`tmux list-windows -t ${JSON.stringify(session)} -F '#{window_name}'`).out.split("\n").filter(Boolean).join(" ");
+        fail(`${wins.length} windows in ${session}: ${names}`);
+      }
+    } else {
+      fail(`tmux session ${session} not found`);
+    }
   }
 
   // 3. no stray agent worktrees / sibling .wt-* dirs

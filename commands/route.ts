@@ -10,12 +10,17 @@
  * Forward bridge scope from codex-1 is preserved under daemon/watch/once:
  *   Discord thread message → maw hey <pane> <message>
  */
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from "fs";
+import { existsSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "fs";
 import { dirname, join, resolve } from "path";
 import { execFile, spawn } from "child_process";
 import { findAtlasRepo } from "../lib/repo";
 import { openMessageStore, type MessageStore, type DiscordMsgRow } from "../lib/discord-db";
 import { createThreadFromMessage, joinThread, postMessage, listGuilds, getGuildChannels, filterTextChannels, getChannel, request as discordRequest } from "../lib/discord";
+import { herdrAgents, resolveHerdrPane } from "../lib/herdr";
+import {
+  routingPath, routingPathForWrite, loadRoutingTable, writeJson,
+  type RouteEntry, type RoutingTable,
+} from "../lib/routing";
 import type { CommandMeta } from "../lib/command-types";
 
 export const meta: CommandMeta = {
@@ -41,14 +46,6 @@ async function resolveChannelMeta(token: string, channelId: string): Promise<{ g
   channelMetaCache.set(channelId, meta);
   return meta;
 }
-
-type RouteEntry = {
-  name?: string;
-  pane: string;
-  agent?: string;
-};
-
-type RoutingTable = Record<string, RouteEntry>;
 
 type DiscordMessage = {
   id: string;
@@ -81,9 +78,7 @@ type PollOpts = {
 };
 
 const DEFAULT_ATLAS_REPO = "/opt/Code/github.com/Soul-Brews-Studio/atlas-oracle";
-const DEFAULT_ROUTING_TABLE = `${DEFAULT_ATLAS_REPO}/.discord/thread-routing.json`;
 const DEFAULT_TEAMS_DIR = `${DEFAULT_ATLAS_REPO}/.maw/teams`;
-const DEFAULT_CONFIG = ".discord/thread-routing.json";
 const DEFAULT_STATE_FILE = ".maw/atlas-route/last-seen.json";
 const DEFAULT_PID_FILE = "/tmp/maw-atlas-route.pid";
 const DEFAULT_STATUS_FILE = "/tmp/maw-atlas-route.status.json";
@@ -127,23 +122,6 @@ function snowflakeToIso(id?: string): string {
   }
 }
 
-function routingPath(args: string[]): string | null {
-  const explicit = argValue(args, "--config") || argValue(args, "--routing") || process.env.DISCORD_THREAD_ROUTING || process.env.ATLAS_THREAD_ROUTING;
-  const repo = findAtlasRepo();
-  const candidates = [
-    explicit ? resolve(explicit) : null,
-    resolve(process.cwd(), DEFAULT_CONFIG),
-    repo ? resolve(repo, ".discord/thread-routing.json") : null,
-    DEFAULT_ROUTING_TABLE,
-  ].filter(Boolean) as string[];
-  return candidates.find(p => existsSync(p)) || null;
-}
-
-function routingPathForWrite(args: string[]): string {
-  const explicit = argValue(args, "--config") || argValue(args, "--routing") || process.env.DISCORD_THREAD_ROUTING || process.env.ATLAS_THREAD_ROUTING;
-  return resolve(explicit || routingPath(args) || DEFAULT_ROUTING_TABLE);
-}
-
 function statePath(args: string[]): string {
   return resolve(argValue(args, "--state") || process.env.ATLAS_ROUTE_STATE || DEFAULT_STATE_FILE);
 }
@@ -164,35 +142,9 @@ function logPath(args: string[]): string {
   return argValue(args, "--log-file") || process.env.ATLAS_ROUTE_LOG_FILE || DEFAULT_LOG_FILE;
 }
 
-function loadRoutingTable(file: string): RoutingTable {
-  const raw = JSON.parse(readFileSync(file, "utf8")) as unknown;
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    throw new Error(`routing table must be an object: ${file}`);
-  }
-
-  const table: RoutingTable = {};
-  for (const [threadId, route] of Object.entries(raw as Record<string, any>)) {
-    if (!/^\d{17,20}$/.test(threadId)) continue;
-    if (!route || typeof route !== "object" || typeof route.pane !== "string" || !route.pane.trim()) continue;
-    table[threadId] = {
-      name: typeof route.name === "string" ? route.name : undefined,
-      pane: route.pane.trim(),
-      agent: typeof route.agent === "string" ? route.agent : undefined,
-    };
-  }
-  return table;
-}
-
 function readJson<T>(file: string, fallback: T): T {
   try { return JSON.parse(readFileSync(file, "utf8")); }
   catch { return fallback; }
-}
-
-function writeJson(file: string, value: any) {
-  mkdirSync(dirname(file), { recursive: true });
-  const tmp = `${file}.tmp-${process.pid}`;
-  writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`);
-  renameSync(tmp, file);
 }
 
 function readLastSeen(file: string): LastSeen {
@@ -628,9 +580,32 @@ function preservedPane(agent: string, thread: ThreadInfo | undefined, existing: 
   return undefined;
 }
 
-function inferPane(agent: string, thread: ThreadInfo | undefined, existing: RoutingTable, args: string[]): string {
+// Tries herdr first (a real, live pane — never guessed). Only fabricates a
+// tmux pane id when herdr itself reports no agents at all, i.e. this is
+// genuinely a non-herdr machine; on a herdr machine an ambiguous or missing
+// match is reported via `warn`, never guessed (measured 2026-10-03: `maw
+// herdr resolve pulse` matches 2 panes and silently prefers the focused one
+// — this function must not repeat that).
+async function inferPane(
+  agent: string, thread: ThreadInfo | undefined, existing: RoutingTable, args: string[],
+  warn: (msg: string) => void,
+): Promise<string | undefined> {
   const current = preservedPane(agent, thread, existing);
   if (current) return current;
+
+  const liveAgents = await herdrAgents();
+  if (liveAgents.length > 0) {
+    const resolved = await resolveHerdrPane(agent);
+    if (resolved.kind === "found") return resolved.pane;
+    if (resolved.kind === "ambiguous") {
+      warn(`${agent}: herdr resolve ambiguous (${resolved.panes.join(", ")}) — pin a pane id manually, not guessing`);
+      return undefined;
+    }
+    warn(`${agent}: no live herdr pane found — skipping (no tmux fallback on a herdr machine)`);
+    return undefined;
+  }
+
+  // No herdr agents anywhere on this machine — legacy tmux-session guess.
   const session = argValue(args, "--session") || process.env.ATLAS_TMUX_SESSION || "01-atlas";
   const base = Number(argValue(args, "--pane-base") || process.env.ATLAS_PANE_BASE || 2);
   return `${session}:${base + agentOrdinal(agent) - 1}`;
@@ -653,11 +628,9 @@ export async function syncRouteTable(log: Log, _token: string, args: string[] = 
   for (const agent of agents) {
     const thread = findThreadForAgent(agent, threads);
     if (!thread) { missing.push(agent); continue; }
-    next[thread.id] = {
-      name: thread.name,
-      pane: inferPane(agent, thread, existing, args),
-      agent,
-    };
+    const pane = await inferPane(agent, thread, existing, args, log);
+    if (!pane) { missing.push(agent); continue; }
+    next[thread.id] = { name: thread.name, pane, agent };
   }
 
   if (!Object.keys(next).length) {

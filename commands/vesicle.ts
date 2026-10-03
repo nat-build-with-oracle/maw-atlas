@@ -12,7 +12,7 @@ import type { CommandMeta } from "../lib/command-types";
 
 export const meta: CommandMeta = {
   name: "vesicle",
-  help: "vesicle <bot> [n] [delay]   tmux pane transport",
+  help: "vesicle <bot> [n] [delay]   tmux pane transport (tmux-only)",
   tokenRequirement: "none",
 };
 
