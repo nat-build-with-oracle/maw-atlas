@@ -11,6 +11,7 @@ export const meta: CommandMeta = {
     "threads [--json]             list active threads across guilds",
     "threads create <ch> <name>  create empty thread",
     "threads open <ch> <name>    create thread with starter msg + join",
+    "threads new <ch> <name> --member <uid>  create + add member + tag in first post",
     "threads delete <name-or-id> delete thread",
     "threads archive <name>      archive thread",
     "threads join <name>         bot joins thread",
@@ -70,6 +71,8 @@ export async function threads(log: (s: string) => void, token: string, args: str
     log("  maw atlas threads                          list active threads");
     log("  maw atlas threads create <ch> <name>       create thread (empty)");
     log("  maw atlas threads open <ch> <name>         create thread with starter message + join");
+    log("  maw atlas threads new <ch> <name> --member <uid> [--archive-after 60|1440|4320|10080] [--text <msg>] [--no-add] [--no-tag]");
+    log("                                             create thread, add the member, tag them in the first post");
     log("  maw atlas threads delete <name-or-id>      delete thread");
     log("  maw atlas threads archive <name-or-id>     archive thread");
     log("  maw atlas threads join <name-or-id>        bot joins thread");
@@ -99,6 +102,33 @@ export async function threads(log: (s: string) => void, token: string, args: str
     const thread = await createThreadFromMessage(token, channelId, msg.id, name);
     await joinThread(token, thread.id);
     log(`✓ #${thread.name} opened (${thread.id}) — with starter message + bot joined`);
+    return;
+  }
+
+  if (sub === "new") {
+    const rest = args.slice(2);
+    const flag = (f: string) => { const i = rest.indexOf(f); return i >= 0 ? rest[i + 1] : undefined; };
+    const valueFlags = new Set(["--member", "--archive-after", "--text"]);
+    const positional = rest.filter((a, i) => !a.startsWith("--") && !valueFlags.has(rest[i - 1]));
+    const channel = positional[0];
+    const name = positional.slice(1).join(" ");
+    const member = flag("--member");
+    const text = flag("--text");
+    const archiveAfter = flag("--archive-after") ? Number(flag("--archive-after")) : undefined;
+    if (!channel || !name || !member) { log("usage: maw atlas threads new <channel> <thread-name> --member <user-id> [--archive-after 60|1440|4320|10080] [--text <msg>] [--no-add] [--no-tag]"); return; }
+    if (!/^\d{17,20}$/.test(member)) { log(`✗ --member must be a user id, got: ${member}`); return; }
+    if (archiveAfter !== undefined && ![60, 1440, 4320, 10080].includes(archiveAfter)) { log("✗ --archive-after must be 60, 1440, 4320 or 10080"); return; }
+    const channelId = await resolveChannel(token, channel);
+    if (!channelId) { log(`✗ channel not found: ${channel}`); return; }
+    const thread = await createThread(token, channelId, name, archiveAfter);
+    log(`✓ #${thread.name} created (${thread.id}, auto-archive ${archiveAfter ?? 10080} min)`);
+    if (!rest.includes("--no-add")) {
+      const r = await addThreadMember(token, thread.id, member);
+      log(r.ok ? `✓ ${member} added` : `✗ add failed: ${r.status}`);
+    }
+    const tag = rest.includes("--no-tag") ? "" : `<@${member}> `;
+    await postMessage(token, thread.id, `${tag}${text ?? `**${name}**`}`);
+    log(`✓ first post${tag ? ` tags ${member}` : ""}`);
     return;
   }
 
