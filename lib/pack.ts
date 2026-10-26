@@ -8,6 +8,7 @@
  *   messages_fts   trigram FTS5 index over discord_messages.content + author_name
  *                  (trigram, not unicode61: Thai has no spaces between words)
  *   server_meta    key/value — guild name and id, so the viewer needs only the db
+ *   channel_meta   the raw Discord channel/thread objects (topic, thread_metadata, …)
  *
  * Reads only the folder (no Discord calls). One tarball is extracted at a time
  * into a temp dir and committed in ~64 MB transactions, so memory holds a slice,
@@ -35,6 +36,7 @@ CREATE TABLE IF NOT EXISTS attachments (
 );
 CREATE INDEX IF NOT EXISTS idx_att_message ON attachments(message_id);
 CREATE TABLE IF NOT EXISTS server_meta (key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS channel_meta (id TEXT PRIMARY KEY, raw_json TEXT NOT NULL);
 `;
 
 export interface MissingAttachment {
@@ -82,6 +84,7 @@ export function packGuild(dir: string, onTarball?: (file: string, added: number)
   };
   try {
     db.exec(SCHEMA);
+    const setChannel = db.prepare("INSERT OR REPLACE INTO channel_meta (id, raw_json) VALUES (?, ?)");
     const serverJson = join(dir, "server.json");
     if (existsSync(serverJson)) {
       const server = JSON.parse(readFileSync(serverJson, "utf8"));
@@ -89,6 +92,7 @@ export function packGuild(dir: string, onTarball?: (file: string, added: number)
       setMeta.run("guild_id", String(server.guild?.id ?? ""));
       setMeta.run("guild_name", String(server.guild?.name ?? ""));
       setMeta.run("exported_at", String(server.exported_at ?? ""));
+      for (const c of server.channels ?? []) setChannel.run(c.id, JSON.stringify(c));
     }
     const has = db.prepare("SELECT 1 FROM attachments WHERE attachment_id = ?");
     const ins = db.prepare(
@@ -106,6 +110,7 @@ export function packGuild(dir: string, onTarball?: (file: string, added: number)
       const ch = manifest.channel;
       const threadIds = new Set<string>((manifest.threads ?? []).map((t: any) => t.id));
       const byId = new Map<string, any>((manifest.attachments ?? []).map((a: any) => [a.attachment_id, a]));
+      for (const t of manifest.threads ?? []) setChannel.run(t.id, JSON.stringify(t));
 
       // Every attachment the messages name, with where it belongs in the server db.
       const wanted: { msg: any; att: any; channelId: string; threadId: string | null }[] = [];

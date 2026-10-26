@@ -15,7 +15,7 @@ const sha = new Bun.CryptoHasher("sha256").update(PNG).digest("hex");
 
 const guild = { id: "100000000000000001", name: "Test Guild" };
 const category = { id: "100000000000000002", name: "Text", type: 4, position: 0 };
-const channel = { id: "100000000000000003", name: "general", type: 0, position: 0, parent_id: category.id, guild_id: guild.id };
+const channel = { id: "100000000000000003", name: "general", type: 0, position: 0, parent_id: category.id, guild_id: guild.id, topic: "say hi" };
 const thread = { id: "100000000000000004", name: "a thread", type: 11, parent_id: channel.id };
 const author = { id: "100000000000000009", username: "nat" };
 const messages = [
@@ -62,8 +62,12 @@ test("viewer serves channels, messages, search and attachment bytes, read-only",
   const get = (p: string, init?: RequestInit) => v.fetch(new Request(`http://127.0.0.1${p}`, init));
   try {
     expect((await (await get("/api/server")).json()).name).toBe("Test Guild");
-    const kinds = (await (await get("/api/channels")).json()).map((c: any) => c.kind).sort();
-    expect(kinds).toEqual(["category", "channel", "thread"]);
+    const chans = await (await get("/api/channels")).json();
+    expect(chans.map((c: any) => c.kind).sort()).toEqual(["category", "channel", "thread"]);
+    expect(chans.find((c: any) => c.id === channel.id).topic).toBe("say hi");
+    expect(await (await get("/api/users")).json()).toEqual([{ id: author.id, name: "nat", bot: 0, messages: 2 }]);
+    const posts = await (await get(`/api/forum?channel=${channel.id}`)).json();
+    expect(posts.map((p: any) => [p.id, p.author, p.preview])).toEqual([[thread.id, "nat", "in the thread"]]);
 
     const ch = await (await get(`/api/messages?channel=${channel.id}`)).json();
     expect(ch.messages.map((m: any) => m.id)).toEqual([messages[0].id]);

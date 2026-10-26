@@ -48,13 +48,17 @@ scripts/build-atlas-view.sh                   # bun build --compile → ./atlas-
   - `attachments`: attachment_id PK, message/channel/thread ids, filename, content_type, size, width, height, sha256, and `data` BLOB
   - `messages_fts`: a trigram FTS5 index on content + author. Trigram works on Thai, which has no spaces between words
   - `server_meta`: the guild name
+  - `channel_meta`: the raw channel and thread objects, which give the viewer each channel's topic
 - How pack runs:
   - It extracts one tarball at a time into a temp dir and commits each tarball in its own transaction.
   - It is idempotent: a re-run adds 0.
   - It reports every attachment that `attachments_json` names but the tar lacks.
   - It makes no Discord calls, and it writes only that folder's `server.sqlite`. Run it on a copy (`cp -Rc`) if the original must stay as `download` left it.
-- **view** opens the db read-only. Features:
-  - sidebar of categories, channels and threads
+- **view** opens the db read-only and is laid out like Discord's dark theme. Features:
+  - server rail; sidebar of categories, channels and threads
+  - channel header with its topic, and a welcome header at the start of each channel
+  - forum channels shown as post cards
+  - member list
   - pages of 100 messages, with more loading as you scroll up
   - inline images, video and audio served from `/att/<id>`, with Range support
   - replies, embeds (text only) and reactions

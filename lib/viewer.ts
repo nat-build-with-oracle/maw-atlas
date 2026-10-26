@@ -9,7 +9,9 @@
  *
  *   GET /                    the page (viewer.html, embedded in a compiled binary)
  *   GET /api/server          guild name, counts, whether attachments/search exist
- *   GET /api/channels        categories, channels and threads
+ *   GET /api/channels        categories, channels and threads (+ topic when packed)
+ *   GET /api/users           everyone who posted, with message counts (the member list)
+ *   GET /api/forum           ?channel=  forum/media posts as cards
  *   GET /api/messages        ?channel=|thread=  &before=|after=|around=<messageId>  &limit=
  *   GET /api/search          ?q=  (FTS5 trigram when packed, LIKE otherwise)
  *   GET /att/<attachmentId>  the bytes, with Range support
@@ -70,7 +72,7 @@ function shapeMessage(row: any, atts: Map<string, any>) {
     })),
     reactions: (m.reactions ?? []).map((r: any) => ({ emoji: r.emoji?.name ?? "?", count: r.count ?? 0 })),
     reply: ref ? {
-      id: ref.id, author: ref.author?.global_name || ref.author?.username || "unknown",
+      id: ref.id, author: ref.author?.global_name || ref.author?.username || "unknown", author_id: ref.author?.id ?? null,
       content: String(ref.content ?? "").slice(0, 200), attachments: ref.attachments?.length ?? 0,
     } : null,
     thread: m.thread ? { id: m.thread.id, name: m.thread.name } : null,
@@ -157,7 +159,7 @@ export function openViewer(dbPath: string) {
     if (hasFts && [...q].length >= 3) {
       mode = "fts5";
       rows = db.query(
-        `SELECT m.message_id, m.channel_id, m.thread_id, m.author_name, m.ts, m.content
+        `SELECT m.message_id, m.channel_id, m.thread_id, m.author_id, m.author_name, m.ts, m.content
            FROM messages_fts f JOIN discord_messages m ON m.rowid = f.rowid
           WHERE messages_fts MATCH ? ORDER BY m.ts DESC LIMIT 200`,
       ).all(`"${q.replace(/"/g, '""')}"`) as any[];
@@ -165,7 +167,7 @@ export function openViewer(dbPath: string) {
       mode = "like";
       const like = `%${q.replace(/[\\%_]/g, c => `\\${c}`)}%`;
       rows = db.query(
-        `SELECT message_id, channel_id, thread_id, author_name, ts, content FROM discord_messages
+        `SELECT message_id, channel_id, thread_id, author_id, author_name, ts, content FROM discord_messages
           WHERE content LIKE ? ESCAPE '\\' OR author_name LIKE ? ESCAPE '\\' ORDER BY ts DESC LIMIT 200`,
       ).all(like, like) as any[];
     }
@@ -203,6 +205,41 @@ export function openViewer(dbPath: string) {
     return new Response(data, { headers });
   }
 
+  const hasChannelMeta = tableExists(db, "channel_meta");
+  function channelList() {
+    const rows = db.query(
+      `SELECT c.id, c.name, c.kind, c.type, c.parent_id, c.position, c.messages,
+              (SELECT max(ts) FROM discord_messages m WHERE m.thread_id = c.id) AS last_ts
+              ${hasChannelMeta ? ", cm.raw_json AS raw" : ""}
+         FROM channels c ${hasChannelMeta ? "LEFT JOIN channel_meta cm ON cm.id = c.id" : ""}`,
+    ).all() as any[];
+    return rows.map(({ raw, ...c }) => {
+      const r = raw ? JSON.parse(raw) : {};
+      return { ...c, topic: r.topic ?? null, nsfw: !!r.nsfw, archived: !!r.thread_metadata?.archived, owner_id: r.owner_id ?? null };
+    });
+  }
+
+  /** Forum/media channels hold only posts (threads): one card per post with its opening message. */
+  function forum(channelId: string) {
+    const threads = db.query(
+      `SELECT c.id, c.name, c.messages, (SELECT max(ts) FROM discord_messages m WHERE m.thread_id = c.id) AS last_ts
+         FROM channels c WHERE c.parent_id = ? AND c.kind = 'thread' ORDER BY last_ts DESC LIMIT 500`,
+    ).all(channelId) as any[];
+    const opener = db.query(
+      `SELECT message_id, author_name, content, raw_json FROM discord_messages WHERE thread_id = ? ORDER BY ts ASC, message_id ASC LIMIT 1`,
+    );
+    return threads.map(t => {
+      const m = opener.get(t.id) as any;
+      const raw = m ? JSON.parse(m.raw_json) : null;
+      const img = raw?.attachments?.find((a: any) => String(a.content_type ?? "").startsWith("image/"));
+      return {
+        ...t, author: m?.author_name ?? null, author_id: raw?.author?.id ?? null,
+        preview: String(m?.content ?? "").slice(0, 240),
+        image: img && packed && db.query("SELECT 1 FROM attachments WHERE attachment_id = ?").get(img.id) ? img.id : null,
+      };
+    });
+  }
+
   function server() {
     const n = (sql: string) => (db.query(sql).get() as any).n as number;
     return {
@@ -220,16 +257,16 @@ export function openViewer(dbPath: string) {
     if (req.method !== "GET" && req.method !== "HEAD") return new Response("read-only", { status: 405 });
     const p = url.pathname;
     try {
-      if (p === "/") return new Response(html, { headers: { "content-type": "text/html; charset=utf-8" } });
+      if (p === "/") return new Response(html, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
       if (p === "/api/server") return json(server());
-      if (p === "/api/channels") {
-        return json(db.query("SELECT id, name, kind, type, parent_id, position, messages FROM channels").all());
-      }
+      if (p === "/api/channels") return json(channelList());
       if (p === "/api/users") {
         return json(db.query(
-          "SELECT author_id AS id, max(author_name) AS name, max(author_is_bot) AS bot FROM discord_messages GROUP BY author_id",
+          `SELECT author_id AS id, max(author_name) AS name, max(author_is_bot) AS bot, count(*) AS messages
+             FROM discord_messages GROUP BY author_id ORDER BY messages DESC`,
         ).all());
       }
+      if (p === "/api/forum") return json(forum(url.searchParams.get("channel") ?? ""));
       if (p === "/api/messages") {
         const r = messages(url.searchParams);
         return json(r, "error" in r ? 400 : 200);
