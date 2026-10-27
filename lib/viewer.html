@@ -1,0 +1,681 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>atlas view</title>
+<style>
+  /* Discord's dark theme (2024–2026 palette). */
+  :root {
+    --rail: #1e1f22; --side: #2b2d31; --bg: #313338; --panel: #232428; --input: #383a40; --float: #111214;
+    --hover: rgba(78,80,88,.3); --sel: rgba(78,80,88,.6); --msghover: #2e3035;
+    --text: #dbdee1; --muted: #949ba4; --faint: #80848e; --head: #f2f3f5; --white: #fff;
+    --link: #00a8fc; --blurple: #5865f2; --green: #23a55a; --border: #3f4147; --divider: rgba(78,80,88,.48);
+    --code: #2b2d31; --codeborder: #1e1f22; --mention: rgba(88,101,242,.3); --mentiontxt: #c9cdfb;
+    --font: "gg sans", "Noto Sans", "Noto Sans Thai", "Sukhumvit Set", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 16px/1.375 var(--font);
+    -webkit-font-smoothing: antialiased; overflow: hidden; }
+  a { color: var(--link); text-decoration: none; } a:hover { text-decoration: underline; }
+  button { font: inherit; }
+  svg { flex: none; }
+  ::-webkit-scrollbar { width: 16px; height: 16px; }
+  ::-webkit-scrollbar-thumb { background: #1a1b1e; border: 4px solid transparent; background-clip: padding-box; border-radius: 8px; min-height: 40px; }
+  ::-webkit-scrollbar-track { background: #2b2d31; border: 4px solid transparent; background-clip: padding-box; border-radius: 8px; }
+  .thin::-webkit-scrollbar { width: 8px; }
+  .thin::-webkit-scrollbar-thumb { background: transparent; border: 2px solid transparent; }
+  .thin:hover::-webkit-scrollbar-thumb { background: #1a1b1e; background-clip: padding-box; }
+  .thin::-webkit-scrollbar-track { background: transparent; border: 0; }
+
+  #app { display: grid; grid-template-columns: 72px 240px 1fr; height: 100vh; }
+
+  /* server rail */
+  #rail { background: var(--rail); display: flex; flex-direction: column; align-items: center; padding-top: 12px; gap: 8px; }
+  .gicon { position: relative; width: 48px; height: 48px; border-radius: 16px; display: grid; place-items: center;
+    background: var(--blurple); color: #fff; font-weight: 600; font-size: 16px; cursor: default; user-select: none; }
+  .gicon.home { background: var(--bg); color: var(--text); border-radius: 50%; }
+  .gicon.sel::before { content: ""; position: absolute; left: -16px; width: 8px; height: 40px; border-radius: 0 4px 4px 0; background: #fff; }
+  .rail-sep { width: 32px; height: 2px; border-radius: 1px; background: #35363c; }
+
+  /* channel sidebar */
+  #side { background: var(--side); display: flex; flex-direction: column; min-height: 0; border-top-left-radius: 8px; }
+  #guild { height: 48px; flex: none; display: flex; align-items: center; justify-content: space-between; padding: 0 16px;
+    font-weight: 600; color: var(--head); box-shadow: 0 1px 0 rgba(4,4,5,.2), 0 1.5px 0 rgba(6,6,7,.05), 0 2px 0 rgba(4,4,5,.05);
+    white-space: nowrap; overflow: hidden; z-index: 1; }
+  #guild span { overflow: hidden; text-overflow: ellipsis; }
+  #tree { overflow-y: auto; padding: 0 8px 16px 8px; flex: 1; }
+  .cat { display: flex; align-items: center; gap: 2px; padding: 16px 8px 4px 0; font-size: 12px; font-weight: 600;
+    letter-spacing: .02em; text-transform: uppercase; color: var(--muted); cursor: pointer; user-select: none; }
+  .cat:hover { color: var(--text); }
+  .cat svg { transition: transform .1s; } .cat.closed svg { transform: rotate(-90deg); }
+  .ch { display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 8px; margin: 1px 0; border-radius: 4px;
+    color: var(--muted); cursor: pointer; font-weight: 500; position: relative; }
+  .ch:hover { background: var(--hover); color: #dbdee1; }
+  .ch.sel { background: var(--sel); color: var(--white); }
+  .ch.empty { opacity: .55; }
+  .ch .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  .ch .tog { flex: none; font-size: 11px; color: var(--muted); padding: 2px 4px; border-radius: 3px; display: none; }
+  .ch:hover .tog, .ch .tog.has { display: inline; }
+  .ch .tog:hover { color: var(--text); }
+  .th { height: 30px; margin-left: 24px; padding-left: 8px; font-size: 14px; }
+  .th::before { content: ""; position: absolute; left: -12px; top: -16px; width: 12px; height: 32px;
+    border-left: 2px solid #4e5058; border-bottom: 2px solid #4e5058; border-bottom-left-radius: 8px; }
+  .th.cont::after { content: ""; position: absolute; left: -12px; top: 14px; height: 18px; border-left: 2px solid #4e5058; }
+  .th.archived .nm { font-style: italic; }
+  #me { height: 52px; flex: none; background: var(--panel); display: flex; align-items: center; gap: 8px; padding: 0 8px; }
+  #me .av { width: 32px; height: 32px; font-size: 13px; }
+  #me .who { font-size: 14px; color: var(--head); font-weight: 600; line-height: 18px; }
+  #me .st { font-size: 12px; color: var(--muted); line-height: 13px; }
+
+  /* chat */
+  #main { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg); }
+  #top { display: flex; align-items: center; gap: 8px; padding: 0 8px 0 16px; height: 48px; flex: none;
+    box-shadow: 0 1px 0 rgba(4,4,5,.2), 0 1.5px 0 rgba(6,6,7,.05), 0 2px 0 rgba(4,4,5,.05); z-index: 1; }
+  #top .ico { color: var(--faint); }
+  #title { font-weight: 600; color: var(--head); white-space: nowrap; }
+  #crumb { color: var(--muted); font-weight: 600; white-space: nowrap; cursor: pointer; }
+  #crumb:hover { color: var(--text); }
+  #topic { color: var(--muted); font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0;
+    padding-left: 8px; margin-left: 4px; border-left: 1px solid var(--border); }
+  #topic:empty { border: 0; }
+  .tbtn { background: none; border: 0; color: var(--muted); cursor: pointer; padding: 4px; display: grid; place-items: center; }
+  .tbtn:hover, .tbtn.on { color: var(--text); }
+  #qwrap { position: relative; }
+  #q { background: var(--rail); border: 0; color: var(--text); border-radius: 4px; height: 24px; padding: 0 28px 0 8px; width: 144px;
+    font: inherit; font-size: 14px; transition: width .25s; outline: none; }
+  #q:focus, #q:not(:placeholder-shown) { width: 240px; }
+  #qwrap svg { position: absolute; right: 6px; top: 4px; color: var(--muted); pointer-events: none; }
+  #body { display: flex; flex: 1; min-height: 0; }
+  #chat { flex: 1; display: flex; flex-direction: column; min-width: 0; position: relative; }
+  #log { flex: 1; overflow-y: auto; overflow-x: hidden; padding-bottom: 24px; }
+  #jump { position: absolute; left: 16px; right: 16px; top: 0; height: 32px; background: var(--blurple); color: #fff; font-size: 14px;
+    font-weight: 500; display: none; align-items: center; justify-content: space-between; padding: 0 12px; border-radius: 0 0 8px 8px;
+    cursor: pointer; z-index: 2; }
+  #jump.show { display: flex; }
+  #composer { flex: none; margin: 0 16px 24px; background: var(--input); border-radius: 8px; height: 44px; display: flex;
+    align-items: center; gap: 12px; padding: 0 16px; color: var(--faint); font-size: 15px; cursor: not-allowed; }
+  #composer .plus { width: 24px; height: 24px; border-radius: 50%; background: #b5bac1; color: var(--input); display: grid; place-items: center; }
+  #composer span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* welcome */
+  .welcome { margin: 16px; padding-top: 32px; }
+  .welcome .big { width: 68px; height: 68px; border-radius: 50%; background: #41434a; display: grid; place-items: center; color: #fff; margin-bottom: 8px; }
+  .welcome h1 { margin: 8px 0; font-size: 32px; line-height: 40px; color: var(--head); font-weight: 700; }
+  .welcome p { margin: 0; color: var(--muted); }
+
+  /* messages */
+  .day { display: flex; align-items: center; margin: 24px 14px 8px 16px; height: 0; border-top: 1px solid var(--divider); position: relative; }
+  .day span { position: absolute; left: 50%; transform: translate(-50%, -50%); background: var(--bg); padding: 2px 4px;
+    color: var(--muted); font-size: 12px; font-weight: 600; line-height: 13px; }
+  .msg { position: relative; padding: 2px 48px 2px 72px; min-height: 22px; word-wrap: break-word; }
+  .msg:hover { background: var(--msghover); }
+  .msg.first { margin-top: 17px; min-height: 44px; }
+  .msg.flash { background: rgba(250,168,26,.1); }
+  .msg.flash::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: #f0b232; }
+  .msg > .av { position: absolute; left: 16px; top: 2px; }
+  .msg.hasreply > .av { top: 24px; }
+  .av { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; font-weight: 600; color: #fff;
+    font-size: 15px; user-select: none; flex: none; overflow: hidden; }
+  .gut { position: absolute; left: 0; width: 72px; top: 4px; text-align: center; color: var(--muted); font-size: 11px; line-height: 22px;
+    visibility: hidden; user-select: none; }
+  .msg:hover .gut { visibility: visible; }
+  .hdr { display: flex; align-items: center; gap: 4px; line-height: 22px; min-width: 0; }
+  .who { font-weight: 500; color: var(--head); cursor: pointer; }
+  .who:hover { text-decoration: underline; }
+  .tag { display: inline-flex; align-items: center; gap: 2px; background: var(--blurple); color: #fff; font-size: 10px; font-weight: 600;
+    padding: 0 4.5px; border-radius: 3px; height: 15px; line-height: 15px; margin-left: 2px; text-transform: uppercase; }
+  .when { font-size: 12px; color: var(--muted); margin-left: 4px; font-weight: 500; }
+  .txt { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); }
+  .txt code { background: var(--code); border: 1px solid var(--codeborder); padding: 0 .2em; border-radius: 4px; font-size: 85%;
+    font-family: "gg mono", ui-monospace, Menlo, Consolas, monospace; }
+  .txt pre { background: var(--code); border: 1px solid var(--codeborder); border-radius: 4px; padding: .5em; margin: 6px 0 0;
+    overflow-x: auto; white-space: pre-wrap; font-family: "gg mono", ui-monospace, Menlo, Consolas, monospace; font-size: 14px;
+    line-height: 18px; max-width: 90%; color: #dbdee1; }
+  .txt blockquote { margin: 0; padding: 0 8px 0 12px; position: relative; display: block; }
+  .txt blockquote::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; border-radius: 4px; background: #4e5058; }
+  .txt h1, .txt h2, .txt h3 { margin: 8px 0 0; color: var(--head); line-height: 1.375; font-weight: 700; display: block; }
+  .txt h1 { font-size: 24px; } .txt h2 { font-size: 20px; } .txt h3 { font-size: 16px; }
+  .txt .sub { font-size: 13px; color: var(--muted); }
+  .txt .spoiler { background: #1e1f22; color: transparent; border-radius: 3px; cursor: pointer; }
+  .txt .spoiler.open { background: rgba(255,255,255,.1); color: inherit; }
+  .ment { background: var(--mention); color: var(--mentiontxt); border-radius: 3px; padding: 0 2px; font-weight: 500; }
+  a.ment:hover { background: var(--blurple); color: #fff; text-decoration: none; }
+  .emoji-only { font-size: 48px; line-height: 1.1; }
+  .edited { font-size: 10px; color: var(--muted); margin-left: 2px; user-select: none; }
+  .sys { position: relative; padding: 2px 48px 2px 72px; color: var(--muted); font-size: 16px; min-height: 22px; display: flex; align-items: center; margin-top: 4px; }
+  .sys:hover { background: var(--msghover); }
+  .sys .si { position: absolute; left: 28px; top: 4px; color: var(--green); }
+  .sys .si.pin { color: var(--muted); }
+  .sys b { color: var(--head); font-weight: 500; }
+  .sys .when { margin-left: 8px; }
+  .reply { position: relative; display: flex; align-items: center; gap: 4px; font-size: 14px; color: var(--muted); line-height: 18px;
+    margin-bottom: 4px; white-space: nowrap; overflow: hidden; cursor: pointer; }
+  .reply::before { content: ""; position: absolute; left: -36px; top: 8px; width: 33px; height: 12px;
+    border-left: 2px solid #4e5058; border-top: 2px solid #4e5058; border-top-left-radius: 6px; }
+  .reply .av { width: 16px; height: 16px; font-size: 9px; }
+  .reply b { color: var(--head); font-weight: 500; opacity: .64; flex: none; }
+  .reply span { overflow: hidden; text-overflow: ellipsis; }
+  .reply:hover span { color: var(--text); }
+  .atts { display: grid; gap: 4px; margin-top: 2px; max-width: 550px; }
+  .atts.n1 { grid-template-columns: auto; justify-content: start; }
+  .atts.n2, .atts.n4 { grid-template-columns: 1fr 1fr; }
+  .atts.n3, .atts.n5, .atts.n6, .atts.n7, .atts.n8, .atts.n9, .atts.n10 { grid-template-columns: 1fr 1fr 1fr; }
+  .media { border-radius: 8px; overflow: hidden; background: var(--side); cursor: pointer; display: block; }
+  .atts.n1 .media img { max-width: min(550px, 100%); max-height: 350px; width: auto; height: auto; display: block; }
+  .atts:not(.n1) .media { aspect-ratio: 1; }
+  .atts:not(.n1) .media img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .atts video { max-width: min(550px, 100%); max-height: 350px; border-radius: 8px; display: block; background: #000; }
+  .files { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
+  .file { display: flex; gap: 8px; align-items: center; background: var(--side); border: 1px solid var(--codeborder);
+    border-radius: 8px; padding: 16px; width: 432px; max-width: 100%; }
+  .file .fname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .file .fs { font-size: 12px; color: var(--faint); }
+  .file.gone { opacity: .6; }
+  .file audio { width: 100%; margin-top: 6px; }
+  .embed { display: grid; border-left: 4px solid #1e1f22; background: var(--side); border-radius: 4px; padding: 8px 16px 16px 12px;
+    margin-top: 4px; max-width: 516px; font-size: 14px; line-height: 18px; }
+  .embed .et { font-weight: 600; color: var(--head); margin-top: 8px; font-size: 16px; line-height: 22px; }
+  .embed .ep { font-size: 12px; color: var(--muted); margin-top: 8px; }
+  .embed .ea { font-size: 14px; color: var(--head); font-weight: 600; margin-top: 8px; }
+  .embed .ed { margin-top: 8px; white-space: pre-wrap; }
+  .embed .ef { margin-top: 8px; } .embed .ef b { display: block; font-size: 14px; color: var(--head); font-weight: 600; }
+  .rx { display: flex; gap: 4px; margin-top: 4px; flex-wrap: wrap; }
+  .rx span { background: var(--side); border: 1px solid transparent; border-radius: 8px; padding: 2px 6px; font-size: 14px;
+    display: inline-flex; gap: 6px; align-items: center; color: var(--muted); font-weight: 500; height: 24px; }
+  .rx span:hover { border-color: #4e5058; background: #393a41; }
+  .threadcard { margin-top: 6px; background: var(--side); border-radius: 4px; padding: 8px 12px; max-width: 480px; cursor: pointer; display: block; color: var(--text); }
+  .threadcard:hover { text-decoration: none; background: #26282c; }
+  .threadcard b { color: var(--head); font-size: 14px; }
+  .threadcard .m { color: var(--link); font-size: 14px; font-weight: 600; }
+  .threadcard .m:hover { text-decoration: underline; }
+  .loadmore { display: flex; justify-content: center; padding: 16px; color: var(--muted); font-size: 14px; }
+  #empty { color: var(--muted); padding: 48px; text-align: center; }
+
+  /* forum */
+  .forum { padding: 16px 24px; display: flex; flex-direction: column; gap: 8px; }
+  .post { background: var(--side); border-radius: 8px; padding: 12px 16px; display: flex; gap: 16px; cursor: pointer; border: 1px solid transparent; }
+  .post:hover { background: #2e3035; border-color: #4e5058; }
+  .post .pt { color: var(--head); font-weight: 600; font-size: 16px; }
+  .post .pp { color: var(--muted); font-size: 14px; margin-top: 4px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  .post .pm { color: var(--muted); font-size: 13px; margin-top: 8px; display: flex; gap: 6px; align-items: center; }
+  .post img { width: 72px; height: 72px; object-fit: cover; border-radius: 8px; flex: none; margin-left: auto; }
+
+  /* member list + search panel */
+  #members, #results { width: 240px; flex: none; background: var(--side); overflow-y: auto; display: none; }
+  #members.open { display: block; padding: 0 8px 16px; }
+  #results { width: 418px; background: var(--side); }
+  #results.open { display: block; }
+  .mh { padding: 24px 8px 4px; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .02em; color: var(--muted); }
+  .mem { display: flex; align-items: center; gap: 12px; height: 42px; padding: 0 8px; border-radius: 4px; color: var(--muted); cursor: default; }
+  .mem:hover { background: var(--hover); color: var(--text); }
+  .mem .av { width: 32px; height: 32px; font-size: 13px; }
+  .mem .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; font-size: 16px; }
+  #results .rh { height: 56px; display: flex; align-items: center; justify-content: space-between; padding: 0 16px; background: var(--rail);
+    color: var(--head); font-weight: 600; font-size: 14px; position: sticky; top: 0; z-index: 1; }
+  #results .rh button { background: none; border: 0; color: var(--muted); cursor: pointer; font-size: 20px; line-height: 1; }
+  .hit { margin: 8px; padding: 8px 12px 10px 56px; background: var(--bg); border-radius: 8px; cursor: pointer; position: relative; border: 1px solid transparent; }
+  .hit:hover { border-color: #4e5058; }
+  .hit .av { position: absolute; left: 10px; top: 28px; }
+  .hit .where { font-size: 12px; color: var(--muted); margin: 0 0 4px -44px; display: flex; gap: 4px; align-items: center; font-weight: 600; }
+  .hit .txt { font-size: 15px; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+  .hit mark { background: rgba(240,178,50,.35); color: inherit; border-radius: 2px; }
+
+  #zoom { position: fixed; inset: 0; background: rgba(0,0,0,.85); display: none; place-items: center; z-index: 9; cursor: zoom-out; }
+  #zoom.open { display: grid; }
+  #zoom img { max-width: 92vw; max-height: 86vh; border-radius: 4px; }
+  #zoom a { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); color: #fff; font-size: 14px; opacity: .7; }
+  #zoom a:hover { opacity: 1; }
+</style>
+</head>
+<body>
+<div id="app">
+  <nav id="rail">
+    <div class="gicon home" title="Archive viewer (read-only)"><svg width="26" height="26" viewBox="0 0 24 24"><path fill="currentColor" d="M3 4a1 1 0 0 1 1-1h16a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4Zm1 6h16v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-9Zm5 2.5a1 1 0 1 0 0 2h6a1 1 0 1 0 0-2H9Z"/></svg></div>
+    <div class="rail-sep"></div>
+    <div class="gicon sel" id="gicon"></div>
+  </nav>
+  <nav id="side">
+    <div id="guild"><span>…</span><svg width="18" height="18" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="m6 9 6 6 6-6"/></svg></div>
+    <div id="tree" class="thin"></div>
+    <div id="me"><div class="av" style="background:#5865f2">⌂</div><div><div class="who">Archive</div><div class="st" id="mest">read-only</div></div></div>
+  </nav>
+  <main id="main">
+    <div id="top">
+      <span class="ico" id="ticon"></span><span id="crumb"></span><span id="title"></span><span id="topic"></span>
+      <button class="tbtn" id="memtog" title="Show Member List"><svg width="24" height="24" viewBox="0 0 24 24"><path fill="currentColor" d="M14.5 8a3 3 0 1 0-2.7-4.3c-.2.4.1.8.5 1.1A5 5 0 0 1 14.2 8h.3ZM13 9a4 4 0 1 1-8 0 4 4 0 0 1 8 0ZM2 19.2C2 16 4.5 13.5 7.6 13.5h2.8c3.1 0 5.6 2.5 5.6 5.7 0 1-.8 1.8-1.8 1.8H3.8c-1 0-1.8-.8-1.8-1.8Zm16-1.2c0 .9-.2 1.7-.6 2.5-.2.3 0 .5.4.5h2.4c1 0 1.8-.8 1.8-1.8 0-3-2.2-5.4-5.1-5.7-.5 0-.6.6-.3 1a8.1 8.1 0 0 1 1.4 3.5Zm-1.9-8.4c-.3.5 0 1.2.6 1.4h.3a3 3 0 1 0-.3-6c-.6 0-.9.6-.6 1.1.5.9.6 2.1 0 3.5Z"/></svg></button>
+      <div id="qwrap"><input id="q" type="search" placeholder="Search" autocomplete="off"><svg width="16" height="16" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" d="M10.5 18a7.5 7.5 0 1 0 0-15 7.5 7.5 0 0 0 0 15Zm5.3-2.2L21 21"/></svg></div>
+    </div>
+    <div id="body">
+      <div id="chat">
+        <div id="jump"><span>You're viewing older messages</span><b>Jump To Present</b></div>
+        <div id="log"><div id="empty">Pick a channel.</div></div>
+        <div id="composer"><div class="plus"><svg width="14" height="14" viewBox="0 0 24 24"><path fill="currentColor" d="M13 5a1 1 0 1 0-2 0v6H5a1 1 0 1 0 0 2h6v6a1 1 0 1 0 2 0v-6h6a1 1 0 1 0 0-2h-6V5Z"/></svg></div><span id="composertxt">This is a read-only archive</span></div>
+      </div>
+      <aside id="members" class="thin"></aside>
+      <aside id="results"></aside>
+    </div>
+  </main>
+</div>
+<div id="zoom"><img alt=""><a target="_blank" rel="noopener">Open original</a></div>
+<script>
+"use strict";
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const api = p => fetch(p).then(r => r.ok ? r.json() : r.json().then(j => Promise.reject(new Error(j.error || r.status))));
+
+let channels = [], byId = new Map(), users = new Map(), server = null;
+let cur = null;               // { kind: "channel"|"thread"|"forum", id }
+let hasOlder = false, hasNewer = false, loading = false, shown = [];
+const openThreads = new Set(), closedCats = new Set();
+
+// ── icons (stroke/fill currentColor so they follow the row colour) ──
+const I = {
+  hash: s => `<svg width="${s}" height="${s}" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M10 3 8 21M16 3l-2 18M4.5 8.5h16M3.5 15.5h16"/></svg>`,
+  voice: s => `<svg width="${s}" height="${s}" viewBox="0 0 24 24"><path fill="currentColor" d="M12 3a1 1 0 0 0-1-1h-.06a1 1 0 0 0-.74.32L5.92 7H3a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h2.92l4.28 4.68a1 1 0 0 0 .74.32H11a1 1 0 0 0 1-1V3Z"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/></svg>`,
+  thread: s => `<svg width="${s}" height="${s}" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2.8c-5.1 0-9.2 3.6-9.2 8.2 0 2.3 1 4.3 2.7 5.8L4.6 21l4.7-2.4c.9.2 1.8.3 2.7.3 5.1 0 9.2-3.6 9.2-8.2S17.1 2.8 12 2.8Z" opacity=".9"/><path fill="none" stroke="var(--side)" stroke-width="1.6" stroke-linecap="round" d="M10.4 7.6 9.6 14.4M14.4 7.6l-.8 6.8M7.8 9.8h8.6M7.4 12.4H16"/></svg>`,
+  forum: s => `<svg width="${s}" height="${s}" viewBox="0 0 24 24"><path fill="currentColor" d="M18.9 3H5.1A2.1 2.1 0 0 0 3 5.1v9.8C3 16 4 17 5.1 17H7v3.5c0 .4.5.7.8.4L12 17h6.9c1.2 0 2.1-1 2.1-2.1V5.1C21 4 20 3 18.9 3ZM7 8h10v2H7V8Zm0 4h7v2H7v-2Z"/></svg>`,
+  news: s => `<svg width="${s}" height="${s}" viewBox="0 0 24 24"><path fill="currentColor" d="M19.6 2.7A1 1 0 0 1 21 3.6v15.8a1 1 0 0 1-1.4.9L12 17H9.4l.9 3.6a1 1 0 0 1-1 1.4H7.8a1 1 0 0 1-1-.8L5.6 17H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h8l7.6-4.3Z"/></svg>`,
+  media: s => `<svg width="${s}" height="${s}" viewBox="0 0 24 24"><path fill="currentColor" d="M2 5a3 3 0 0 1 3-3h14a3 3 0 0 1 3 3v14a3 3 0 0 1-3 3H5a3 3 0 0 1-3-3V5Zm5.5 5a2 2 0 1 0 0-4 2 2 0 0 0 0 4Zm-3 9h15l-4.5-7-3.5 5-2-2.5-5 4.5Z"/></svg>`,
+  chev: s => `<svg width="${s}" height="${s}" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" d="m6 9 6 6 6-6"/></svg>`,
+  join: s => `<svg width="${s}" height="${s}" viewBox="0 0 18 18"><path fill="currentColor" d="M0 8h14.2l-3.6-3.6L12 3l6 6-6 6-1.4-1.4 3.6-3.6H0V8Z"/></svg>`,
+  pin: s => `<svg width="${s}" height="${s}" viewBox="0 0 24 24"><path fill="currentColor" d="M19.4 9.1 14.9 4.6a1 1 0 0 0-1.6.3l-1.5 3.1-4.3 1.8a1 1 0 0 0-.3 1.6l2.3 2.3-5.2 5.2 1.4 1.4 5.2-5.2 2.3 2.3a1 1 0 0 0 1.6-.3l1.8-4.3 3.1-1.5a1 1 0 0 0 .3-1.6Z"/></svg>`,
+  file: s => `<svg width="${s}" height="${Math.round(s * 4 / 3)}" viewBox="0 0 30 40"><path fill="#4e5058" d="M0 3a3 3 0 0 1 3-3h17l10 10v27a3 3 0 0 1-3 3H3a3 3 0 0 1-3-3V3Z"/><path fill="#80848e" d="M20 0v7a3 3 0 0 0 3 3h7L20 0Z"/><path fill="#dbdee1" d="M7 18h16v2H7zM7 23h16v2H7zM7 28h10v2H7z"/></svg>`,
+};
+const chIcon = (c, s = 20) => c.kind === "thread" ? I.thread(s) : isVoice(c) ? I.voice(s) : c.type === 15 ? I.forum(s) : c.type === 5 ? I.news(s) : c.type === 16 ? I.media(s) : I.hash(s);
+
+// Discord's default avatar colours, picked by user id.
+const PALETTE = ["#5865f2", "#757e8a", "#3ba55c", "#faa61a", "#ed4245", "#eb459e"];
+const colorFor = id => { try { return PALETTE[Number((BigInt(id || "0") >> 22n) % 6n)]; } catch { return PALETTE[0]; } };
+const initials = name => {
+  const w = String(name || "?").trim().split(/[\s._-]+/).filter(Boolean);
+  return (w.length > 1 ? [...w[0]][0] + [...w[1]][0] : [...(w[0] || "?")].slice(0, 2).join("")).toUpperCase();
+};
+const avatar = (id, name, extra = "") => `<div class="av"${extra} style="background:${colorFor(id)}">${esc(initials(name))}</div>`;
+const isVoice = c => c.type === 2 || c.type === 13;
+const isForum = c => c && (c.type === 15 || c.type === 16);
+const fmtSize = b => b == null ? "" : b < 1024 ? b + " bytes" : b < 1048576 ? (b / 1024).toFixed(2) + " KB" : (b / 1048576).toFixed(2) + " MB";
+const dt = ts => new Date(ts);
+const sameDay = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+const fmtTime = ts => dt(ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+// Discord: "Today at 1:13 PM", "Yesterday at 9:02 AM", otherwise "10/22/2026 8:13 AM".
+function fmtStamp(ts) {
+  const d = dt(ts), now = new Date(), y = new Date(now); y.setDate(now.getDate() - 1);
+  if (sameDay(d, now)) return `Today at ${fmtTime(ts)}`;
+  if (sameDay(d, y)) return `Yesterday at ${fmtTime(ts)}`;
+  return `${d.toLocaleDateString([], { month: "2-digit", day: "2-digit", year: "numeric" })} ${fmtTime(ts)}`;
+}
+const fmtFull = ts => dt(ts).toLocaleString([], { weekday: "long", year: "numeric", month: "long", day: "numeric", hour: "numeric", minute: "2-digit" });
+const fmtDay = ts => dt(ts).toLocaleDateString([], { year: "numeric", month: "long", day: "numeric" });
+const ago = ts => {
+  if (!ts) return "";
+  const s = (Date.now() - dt(ts)) / 1000;
+  for (const [n, u] of [[31536000, "y"], [2592000, "mo"], [86400, "d"], [3600, "h"], [60, "m"]]) if (s >= n) return `${Math.floor(s / n)}${u} ago`;
+  return "just now";
+};
+const route2 = c => `#/${c.kind === "thread" ? "t" : "c"}/${c.id}`;
+
+// ── sidebar ──
+function buildTree() {
+  const kids = new Map();
+  for (const c of channels) {
+    const k = c.parent_id || "";
+    if (!kids.has(k)) kids.set(k, []);
+    kids.get(k).push(c);
+  }
+  const order = (a, b) => (isVoice(a) - isVoice(b)) || (a.position ?? 0) - (b.position ?? 0) || a.name.localeCompare(b.name);
+  const threadsOf = id => (kids.get(id) || []).filter(c => c.kind === "thread")
+    .sort((a, b) => String(b.last_ts || "").localeCompare(String(a.last_ts || "")) || (BigInt(b.id) > BigInt(a.id) ? 1 : -1));
+  const html = [];
+  const chRow = c => {
+    const ths = isForum(c) ? [] : threadsOf(c.id);
+    const selThread = cur && cur.kind === "thread" && byId.get(cur.id)?.parent_id === c.id;
+    const open = openThreads.has(c.id) || selThread;
+    const sel = cur && cur.id === c.id ? " sel" : "";
+    const empty = !c.messages && !threadsOf(c.id).length ? " empty" : "";
+    html.push(`<div class="ch${sel}${empty}" data-go="${route2(c)}" title="${esc(c.name)}">${chIcon(c)}<span class="nm">${esc(c.name)}</span>` +
+      (ths.length ? `<span class="tog${open ? " has" : ""}" data-tog="${c.id}" title="${ths.length} thread(s)">${open ? "▾" : "▸"} ${ths.length}</span>` : "") + `</div>`);
+    if (open) ths.forEach((t, i) => {
+      html.push(`<div class="ch th${i < ths.length - 1 ? " cont" : ""}${t.archived ? " archived" : ""}${cur && cur.id === t.id ? " sel" : ""}" data-go="${route2(t)}" title="${esc(t.name)} · ${t.messages ?? 0} messages"><span class="nm">${esc(t.name)}</span></div>`);
+    });
+  };
+  for (const c of (kids.get("") || []).filter(c => c.kind === "channel").sort(order)) chRow(c);
+  for (const cat of (kids.get("") || []).filter(c => c.kind === "category").sort(order)) {
+    const closed = closedCats.has(cat.id);
+    html.push(`<div class="cat${closed ? " closed" : ""}" data-cat="${cat.id}">${I.chev(12)}<span>${esc(cat.name)}</span></div>`);
+    const list = (kids.get(cat.id) || []).filter(c => c.kind === "channel").sort(order);
+    // a collapsed category still shows the selected channel, like Discord
+    for (const c of closed ? list.filter(c => cur && (cur.id === c.id || byId.get(cur.id)?.parent_id === c.id)) : list) chRow(c);
+  }
+  const orphans = channels.filter(c => c.kind === "channel" && c.parent_id && !byId.has(c.parent_id));
+  if (orphans.length) { html.push(`<div class="cat">${I.chev(12)}<span>other</span></div>`); orphans.sort(order).forEach(chRow); }
+  $("#tree").innerHTML = html.join("");
+  $("#tree .sel")?.scrollIntoView({ block: "nearest" });
+}
+
+$("#tree").addEventListener("click", e => {
+  const tog = e.target.closest("[data-tog]");
+  if (tog) { e.stopPropagation(); const id = tog.dataset.tog; openThreads.has(id) ? openThreads.delete(id) : openThreads.add(id); buildTree(); return; }
+  const cat = e.target.closest("[data-cat]");
+  if (cat) { const id = cat.dataset.cat; closedCats.has(id) ? closedCats.delete(id) : closedCats.add(id); buildTree(); return; }
+  const ch = e.target.closest("[data-go]");
+  if (ch) location.hash = ch.dataset.go;
+});
+
+// ── message markdown (Discord's subset, escaped first) ──
+function inline(s) {
+  // Links and mentions become placeholders first, so ** _ ~~ inside a URL are never read as formatting.
+  const keep = [];
+  const stash = h => `\u0000${keep.push(h) - 1}\u0000`;
+  const link = (u, text) => stash(`<a href="${u}" target="_blank" rel="noopener noreferrer">`) + text + stash("</a>");
+  s = s.replace(/&lt;@!?(\d+)&gt;/g, (_, id) => stash(`<span class="ment">@${esc(users.get(id)?.name || id)}</span>`))
+       .replace(/&lt;@&amp;(\d+)&gt;/g, () => stash(`<span class="ment">@role</span>`))
+       .replace(/@(everyone|here)\b/g, (_, w) => stash(`<span class="ment">@${w}</span>`))
+       .replace(/&lt;#(\d+)&gt;/g, (_, id) => {
+         const c = byId.get(id);
+         return stash(c ? `<a class="ment" href="${route2(c)}">#${esc(c.name)}</a>` : `<span class="ment">#unknown</span>`);
+       })
+       .replace(/&lt;a?:(\w+):\d+&gt;/g, (_, n) => stash(`:${n}:`))
+       .replace(/&lt;t:(-?\d+)(?::\w)?&gt;/g, (_, t) => stash(`<span class="ment" style="background:rgba(255,255,255,.06);color:inherit">${esc(fmtFull(Number(t) * 1000))}</span>`))
+       .replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, (_, t, u) => link(u, t))
+       .replace(/(^|[\s(])(https?:\/\/[^\s<\u0000]+[^\s<\u0000.,:;"')\]])/g, (_, p, u) => p + stash(`<a href="${u}" target="_blank" rel="noopener noreferrer">${u}</a>`))
+       .replace(/\*\*\*(.+?)\*\*\*/g, "<b><i>$1</i></b>")
+       .replace(/\*\*(.+?)\*\*/g, "<b>$1</b>")
+       .replace(/__(.+?)__/g, "<u>$1</u>")
+       .replace(/(^|[^*\w])\*(?!\s)(.+?)\*(?!\w)/g, "$1<i>$2</i>")
+       .replace(/(^|\W)_(?!\s)(.+?)_(?!\w)/g, "$1<i>$2</i>")
+       .replace(/~~(.+?)~~/g, "<s>$1</s>")
+       .replace(/\|\|(.+?)\|\|/g, '<span class="spoiler">$1</span>');
+  return s.replace(/\u0000(\d+)\u0000/g, (_, i) => keep[i]);
+}
+function md(src) {
+  if (!src) return "";
+  const parts = esc(src).split(/(```[\s\S]*?```)/g);
+  return parts.map(p => {
+    if (p.startsWith("```") && p.endsWith("```") && p.length >= 6) {
+      return `<pre>${p.slice(3, -3).replace(/^[\w+-]*\n/, "").replace(/\n$/, "")}</pre>`;
+    }
+    return p.split(/(`[^`\n]+`)/g).map(q => q.startsWith("`") && q.length > 2 && q.endsWith("`") ? `<code>${q.slice(1, -1)}</code>` : lines(q)).join("");
+  }).join("");
+}
+function lines(s) {
+  return s.split("\n").map(l => {
+    let m;
+    if ((m = l.match(/^(#{1,3}) (.+)$/))) return `<h${m[1].length}>${inline(m[2])}</h${m[1].length}>`;
+    if ((m = l.match(/^&gt; ?(.*)$/))) return `<blockquote>${inline(m[1])}</blockquote>`;
+    if ((m = l.match(/^-# (.+)$/))) return `<span class="sub">${inline(m[1])}</span>`;
+    if ((m = l.match(/^(\s*)[-*] (.+)$/))) return `${m[1]}• ${inline(m[2])}`;
+    return inline(l);
+  }).join("\n").replace(/<\/(h\d|blockquote)>\n/g, "</$1>");
+}
+const emojiOnly = s => s && s.length <= 30 && /^(\p{Extended_Pictographic}|\p{Emoji_Component}|‍|️|\s)+$/u.test(s) && !/^[\d\s#*]+$/.test(s);
+
+// ── messages ──
+const SYS = {
+  1: m => `<b>${esc(m.author.name)}</b> added someone to the thread.`,
+  2: m => `<b>${esc(m.author.name)}</b> removed someone from the thread.`,
+  4: m => `<b>${esc(m.author.name)}</b> changed the channel name: <b>${esc(m.content)}</b>`,
+  6: m => `<b>${esc(m.author.name)}</b> pinned a message to this channel.`,
+  7: m => `Welcome, <b>${esc(m.author.name)}</b>. We hope you brought pizza.`,
+  8: m => `<b>${esc(m.author.name)}</b> just boosted the server!`,
+  18: m => `<b>${esc(m.author.name)}</b> started a thread: ` + (m.thread ? `<a href="#/t/${m.thread.id}"><b>${esc(m.content || m.thread.name)}</b></a>` : `<b>${esc(m.content)}</b>`) + `. See all threads.`,
+};
+const isSys = m => SYS[m.type] !== undefined;
+function attHtml(list) {
+  const media = list.filter(a => a.packed && /^(image|video)\//.test(a.content_type || ""));
+  const files = list.filter(a => !media.includes(a));
+  const out = [];
+  if (media.length) {
+    out.push(`<div class="atts n${Math.min(media.length, 10)}">` + media.map(a => {
+      const src = `/att/${a.id}`;
+      if ((a.content_type || "").startsWith("video/")) return `<video controls preload="metadata" src="${src}"></video>`;
+      const dims = a.width && a.height && media.length === 1 ? ` width="${Math.min(a.width, 550, Math.round(a.width * 350 / a.height))}"` : "";
+      return `<a class="media" data-zoom="${src}" title="${esc(a.filename)}"><img loading="lazy" src="${src}" alt="${esc(a.filename)}"${dims}></a>`;
+    }).join("") + `</div>`);
+  }
+  if (files.length) {
+    out.push(`<div class="files">` + files.map(a => {
+      const src = `/att/${a.id}`;
+      const audio = a.packed && (a.content_type || "").startsWith("audio/");
+      return `<div class="file${a.packed ? "" : " gone"}">${I.file(24)}<div style="min-width:0;flex:1">` +
+        (a.packed ? `<a class="fname" href="${src}" target="_blank">${esc(a.filename)}</a>` : `<div class="fname">${esc(a.filename)}</div>`) +
+        `<div class="fs">${fmtSize(a.size)}${a.packed ? "" : " · not packed"}</div>` +
+        (audio ? `<audio controls preload="none" src="${src}"></audio>` : "") + `</div></div>`;
+    }).join("") + `</div>`);
+  }
+  return out.join("");
+}
+function bodyHtml(m) {
+  const out = [];
+  if (m.content) {
+    const big = emojiOnly(m.content.trim()) ? " emoji-only" : "";
+    out.push(`<div class="txt${big}">${md(m.content)}${m.edited ? `<span class="edited" title="${esc(fmtFull(m.edited))}"> (edited)</span>` : ""}</div>`);
+  }
+  for (const e of m.embeds) {
+    if (!e.title && !e.description && !e.fields.length && !e.author) continue;
+    const color = e.color != null ? `#${e.color.toString(16).padStart(6, "0")}` : "#1e1f22";
+    out.push(`<div class="embed" style="border-left-color:${color}">` +
+      (e.provider ? `<div class="ep">${esc(e.provider)}</div>` : "") + (e.author ? `<div class="ea">${esc(e.author)}</div>` : "") +
+      (e.title ? `<div class="et">${e.url ? `<a href="${esc(e.url)}" target="_blank" rel="noopener noreferrer">${esc(e.title)}</a>` : esc(e.title)}</div>` : "") +
+      (e.description ? `<div class="ed txt">${md(e.description)}</div>` : "") +
+      e.fields.map(f => `<div class="ef"><b>${esc(f.name)}</b><div class="txt">${md(f.value)}</div></div>`).join("") +
+      (e.footer ? `<div class="ep">${esc(e.footer)}</div>` : "") + `</div>`);
+  }
+  if (m.attachments.length) out.push(attHtml(m.attachments));
+  if (m.reactions.length) out.push(`<div class="rx">${m.reactions.map(r => `<span>${esc(r.emoji)} ${r.count}</span>`).join("")}</div>`);
+  if (m.thread && byId.has(m.thread.id)) {
+    const t = byId.get(m.thread.id);
+    out.push(`<a class="threadcard" href="#/t/${t.id}"><b>${esc(t.name)}</b> <span class="m">${t.messages ?? 0} Messages ›</span>` +
+      (t.last_ts ? `<span style="color:var(--muted);font-size:13px"> · ${esc(ago(t.last_ts))}</span>` : "") + `</a>`);
+  }
+  return out.join("");
+}
+function msgHtml(m, prev) {
+  const out = [];
+  if (!prev || !sameDay(dt(prev.ts), dt(m.ts))) out.push(`<div class="day"><span>${esc(fmtDay(m.ts))}</span></div>`);
+  if (isSys(m)) {
+    const icon = m.type === 6 ? `<span class="si pin">${I.pin(16)}</span>` : m.type === 18 ? `<span class="si" style="color:var(--muted)">${I.thread(16)}</span>` : `<span class="si">${I.join(16)}</span>`;
+    out.push(`<div class="sys" id="m${m.id}">${icon}<span>${SYS[m.type](m)}</span><span class="when" title="${esc(fmtFull(m.ts))}">${esc(fmtStamp(m.ts))}</span></div>`);
+    return out.join("");
+  }
+  const grouped = prev && !m.reply && !isSys(prev) && prev.author.id === m.author.id
+    && sameDay(dt(prev.ts), dt(m.ts)) && dt(m.ts) - dt(prev.ts) < 7 * 60 * 1000;
+  out.push(`<div class="msg${grouped ? "" : " first"}${m.reply ? " hasreply" : ""}" id="m${m.id}">`);
+  if (grouped) {
+    out.push(`<span class="gut" title="${esc(fmtFull(m.ts))}">${esc(fmtTime(m.ts))}</span>`);
+  } else {
+    if (m.reply) {
+      out.push(`<div class="reply" data-jump="${m.reply.id}">${avatar(m.reply.author_id || m.reply.id, m.reply.author)}<b>@${esc(m.reply.author)}</b>` +
+        `<span>${m.reply.content ? esc(m.reply.content) : m.reply.attachments ? "<i>Click to see attachment</i> 🖼" : "<i>Original message was deleted</i>"}</span></div>`);
+    }
+    out.push(avatar(m.author.id, m.author.name));
+    out.push(`<div class="hdr"><span class="who">${esc(m.author.name)}</span>${m.author.bot ? `<span class="tag">✓ App</span>` : ""}` +
+      `<span class="when" title="${esc(fmtFull(m.ts))}">${esc(fmtStamp(m.ts))}</span></div>`);
+  }
+  out.push(bodyHtml(m), `</div>`);
+  return out.join("");
+}
+function welcomeHtml() {
+  const c = byId.get(cur.id);
+  if (!c) return "";
+  if (c.kind === "thread") {
+    const p = byId.get(c.parent_id);
+    return `<div class="welcome"><div class="big">${I.thread(40)}</div><h1>${esc(c.name)}</h1><p>Started in ${p ? `<a href="${route2(p)}">#${esc(p.name)}</a>` : "a channel"} · ${c.messages ?? 0} messages</p></div>`;
+  }
+  return `<div class="welcome"><div class="big">${chIcon(c, 42)}</div><h1>Welcome to #${esc(c.name)}!</h1><p>This is the start of the #${esc(c.name)} channel.${c.topic ? " " + esc(c.topic) : ""}</p></div>`;
+}
+
+function render(keepScroll) {
+  const log = $("#log");
+  const html = [];
+  if (hasOlder) html.push(`<div class="loadmore">Loading older messages…</div>`);
+  else html.push(welcomeHtml());
+  shown.forEach((m, i) => html.push(msgHtml(m, shown[i - 1])));
+  if (hasNewer) html.push(`<div class="loadmore" data-more="newer" style="cursor:pointer">Load newer messages</div>`);
+  const anchor = keepScroll ? log.scrollHeight - log.scrollTop : null;
+  log.innerHTML = html.join("");
+  if (anchor != null) log.scrollTop = log.scrollHeight - anchor;
+  $("#jump").classList.toggle("show", hasNewer);
+}
+
+function setHeader(c) {
+  const parent = c && c.parent_id ? byId.get(c.parent_id) : null;
+  const inThread = c && c.kind === "thread" && parent;
+  $("#ticon").innerHTML = c ? (inThread ? chIcon(parent, 24) : chIcon(c, 24)) : "";
+  $("#crumb").innerHTML = inThread ? `${esc(parent.name)} <span style="color:var(--faint)">›</span> ` : "";
+  $("#crumb").onclick = inThread ? () => { location.hash = route2(parent); } : null;
+  if (inThread) $("#ticon").onclick = $("#crumb").onclick;
+  $("#title").innerHTML = c ? (inThread ? `${I.thread(18).replace("<svg", '<svg style="vertical-align:-3px;margin-right:4px;color:var(--faint)"')}${esc(c.name)}` : esc(c.name)) : "";
+  $("#topic").textContent = c && c.topic ? c.topic : "";
+  $("#composertxt").textContent = c ? `Message ${c.kind === "thread" ? "" : "#"}${c.name} — read-only archive` : "This is a read-only archive";
+  document.title = `${c ? (c.kind === "thread" ? "" : "#") + c.name : "atlas"} | ${server.name}`;
+}
+
+function qs() { return cur.kind === "thread" ? `thread=${cur.id}` : `channel=${cur.id}`; }
+async function open(kind, id, around) {
+  const c = byId.get(id);
+  cur = { kind: kind === "channel" && isForum(c) ? "forum" : kind, id };
+  if (c && kind === "thread") openThreads.add(c.parent_id);
+  buildTree();
+  setHeader(c);
+  if (cur.kind === "forum") return openForum(c);
+  $("#composer").style.display = "";
+  const r = await api(`/api/messages?${qs()}${around ? `&around=${around}&limit=80` : ""}`);
+  shown = r.messages; hasOlder = r.hasOlder; hasNewer = r.hasNewer;
+  render(false);
+  const log = $("#log");
+  if (around) {
+    const el = document.getElementById("m" + around);
+    if (el) { el.scrollIntoView({ block: "center" }); el.classList.add("flash"); setTimeout(() => el.classList.remove("flash"), 2500); }
+  } else log.scrollTop = log.scrollHeight;
+  if ($("#members").classList.contains("open")) renderMembers();
+}
+async function openForum(c) {
+  $("#composer").style.display = "none";
+  $("#jump").classList.remove("show");
+  const posts = await api(`/api/forum?channel=${c.id}`);
+  $("#log").innerHTML = `<div class="welcome" style="padding-top:8px"><h1 style="font-size:24px">${esc(c.name)}</h1><p>${posts.length} posts${c.topic ? " · " + esc(c.topic) : ""}</p></div><div class="forum">` +
+    (posts.length ? posts.map(p => `<div class="post" data-go="#/t/${p.id}"><div style="min-width:0;flex:1"><div class="pt">${esc(p.name)}</div>` +
+      `<div class="pp"><b style="color:var(--text);font-weight:500">${esc(p.author || "")}</b>${p.author ? ": " : ""}${esc(p.preview)}</div>` +
+      `<div class="pm">${I.thread(14)} ${p.messages ?? 0} · ${esc(ago(p.last_ts))}</div></div>` +
+      (p.image ? `<img loading="lazy" src="/att/${p.image}" alt="">` : "") + `</div>`).join("") : `<div id="empty">No posts.</div>`) + `</div>`;
+  $("#log").scrollTop = 0;
+}
+async function more(dir) {
+  if (loading || !shown.length) return;
+  loading = true;
+  try {
+    if (dir === "older") {
+      const r = await api(`/api/messages?${qs()}&before=${shown[0].id}`);
+      shown = [...r.messages, ...shown]; hasOlder = r.hasOlder;
+      render(true);
+    } else {
+      const r = await api(`/api/messages?${qs()}&after=${shown[shown.length - 1].id}`);
+      const top = $("#log").scrollTop;
+      shown = [...shown, ...r.messages]; hasNewer = r.hasNewer;
+      render(false); $("#log").scrollTop = top;
+    }
+  } finally { loading = false; }
+}
+$("#log").addEventListener("click", e => {
+  const b = e.target.closest("[data-more]");
+  if (b) return more(b.dataset.more);
+  const sp = e.target.closest(".spoiler");
+  if (sp) { sp.classList.add("open"); return; }
+  const go = e.target.closest("[data-go]");
+  if (go) { location.hash = go.dataset.go; return; }
+  const z = e.target.closest("[data-zoom]");
+  if (z) { $("#zoom img").src = z.dataset.zoom; $("#zoom a").href = z.dataset.zoom; $("#zoom").classList.add("open"); return; }
+  const j = e.target.closest("[data-jump]");
+  if (j) {
+    const el = document.getElementById("m" + j.dataset.jump);
+    if (el) { el.scrollIntoView({ block: "center" }); el.classList.add("flash"); setTimeout(() => el.classList.remove("flash"), 1500); }
+    else location.hash = `#/${cur.kind === "thread" ? "t" : "c"}/${cur.id}/${j.dataset.jump}`;
+  }
+});
+$("#log").addEventListener("scroll", e => {
+  if (cur && cur.kind !== "forum" && hasOlder && e.target.scrollTop < 400) more("older");
+});
+$("#jump").addEventListener("click", () => { if (cur) { history.replaceState(null, "", `#/${cur.kind === "thread" ? "t" : "c"}/${cur.id}`); open(cur.kind === "thread" ? "thread" : "channel", cur.id); } });
+$("#zoom").addEventListener("click", e => { if (e.target.tagName !== "A") $("#zoom").classList.remove("open"); });
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape") $("#zoom").classList.remove("open");
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") { e.preventDefault(); $("#q").focus(); }
+});
+
+// ── member list ──
+function renderMembers() {
+  const all = [...users.values()];
+  const bots = all.filter(u => u.bot), people = all.filter(u => !u.bot);
+  const row = u => `<div class="mem" title="${u.messages} messages">${avatar(u.id, u.name)}<span class="nm">${esc(u.name)}</span>${u.bot ? '<span class="tag">✓ App</span>' : ""}</div>`;
+  $("#members").innerHTML = (people.length ? `<div class="mh">Members — ${people.length}</div>${people.map(row).join("")}` : "") +
+    (bots.length ? `<div class="mh">Apps — ${bots.length}</div>${bots.map(row).join("")}` : "");
+}
+$("#memtog").addEventListener("click", () => {
+  const m = $("#members");
+  m.classList.toggle("open");
+  $("#memtog").classList.toggle("on", m.classList.contains("open"));
+  $("#results").classList.remove("open");
+  if (m.classList.contains("open")) renderMembers();
+});
+
+// ── search ──
+let searchTimer = null;
+$("#q").addEventListener("input", () => { clearTimeout(searchTimer); searchTimer = setTimeout(search, 250); });
+$("#q").addEventListener("keydown", e => {
+  if (e.key === "Escape") { $("#q").value = ""; $("#results").classList.remove("open"); $("#q").blur(); }
+  if (e.key === "Enter") { clearTimeout(searchTimer); search(); }
+});
+async function search() {
+  const q = $("#q").value.trim();
+  const box = $("#results");
+  if (!q) { box.classList.remove("open"); return; }
+  const r = await api(`/api/search?q=${encodeURIComponent(q)}`);
+  const hl = s => md(s).split(esc(q)).join(`<mark>${esc(q)}</mark>`);
+  box.innerHTML = `<div class="rh"><span>${r.results.length >= 200 ? "200+" : r.results.length} Results</span><button title="Close">×</button></div>` +
+    r.results.map(h => {
+      const where = h.thread_id ? byId.get(h.thread_id) : byId.get(h.channel_id);
+      const k = h.thread_id ? "t" : "c";
+      return `<div class="hit" data-go="#/${k}/${h.thread_id || h.channel_id}/${h.message_id}">` +
+        `<div class="where">${where ? chIcon(where, 14) + esc(where.name) : ""}</div>` +
+        avatar(h.author_id || h.message_id, h.author_name) +
+        `<div class="hdr"><span class="who">${esc(h.author_name || "")}</span><span class="when">${esc(fmtStamp(h.ts))}</span></div>` +
+        `<div class="txt">${hl(h.content)}</div></div>`;
+    }).join("");
+  box.classList.add("open");
+  $("#members").classList.remove("open"); $("#memtog").classList.remove("on");
+}
+$("#results").addEventListener("click", e => {
+  if (e.target.closest("button")) { $("#results").classList.remove("open"); return; }
+  const h = e.target.closest("[data-go]");
+  if (h) location.hash = h.dataset.go;
+});
+
+// ── routing ──
+function route() {
+  const m = location.hash.match(/^#\/([ct])\/(\d+)(?:\/(\d+))?/);
+  if (m) open(m[1] === "t" ? "thread" : "channel", m[2], m[3]).catch(err => { $("#log").innerHTML = `<div id="empty">${esc(err.message)}</div>`; });
+}
+window.addEventListener("hashchange", route);
+
+(async () => {
+  [server, channels] = await Promise.all([api("/api/server"), api("/api/channels")]);
+  for (const u of await api("/api/users")) users.set(u.id, u);
+  byId = new Map(channels.map(c => [c.id, c]));
+  $("#guild span").textContent = server.name;
+  $("#gicon").textContent = initials(server.name).slice(0, 3);
+  $("#gicon").title = server.name;
+  const g = String(server.name).split(/\s+/).filter(Boolean).map(w => [...w][0]).join("").slice(0, 4);
+  if (g.length >= 2) $("#gicon").textContent = g;
+  $("#mest").textContent = `${server.messages.toLocaleString()} msgs · ${server.attachments.toLocaleString()} files${server.packed ? "" : " (not packed)"}`;
+  buildTree();
+  if (location.hash) route();
+  else {
+    const firstCh = channels.filter(c => c.kind === "channel" && c.messages).sort((a, b) => (b.messages ?? 0) - (a.messages ?? 0))[0];
+    if (firstCh) location.hash = route2(firstCh);
+  }
+})();
+</script>
+</body>
+</html>

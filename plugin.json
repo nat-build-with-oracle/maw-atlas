@@ -5,11 +5,16 @@
   "sdk": "^1.0.0",
   "description": "Discord fleet infrastructure — manage bots, channels, guilds, permissions, backfill messages",
   "author": "atlas-oracle",
-  "capabilities": ["fs:read", "fs:write"],
+  "capabilities": [
+    "fs:read",
+    "fs:write"
+  ],
   "cli": {
     "command": "atlas",
-    "aliases": ["at"],
-    "help": "maw atlas <ls|read|download|channel|backfill|check|wake|vesicle> — Discord fleet ops"
+    "aliases": [
+      "at"
+    ],
+    "help": "maw atlas <ls|read|download|pack|view|channel|backfill|check|wake|vesicle> — Discord fleet ops"
   },
   "weight": 50,
   "runtime": "bun-dev",
