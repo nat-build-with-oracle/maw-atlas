@@ -2,7 +2,8 @@
 """atlas-brain — a Discord server (or several) as a 3D meaning map, for `maw atlas brain` (run through uv).
 
 usage:
-  atlas-brain.py insight <brain dir>     topics (HDBSCAN + c-TF-IDF) + stats → insight.json, topic.u16
+  atlas-brain.py insight <brain dir>     topics (HDBSCAN + c-TF-IDF) + stats → insight.json, topic.u16, + separate
+  atlas-brain.py separate <brain dir>    the "separate" layout: one island per room → sep.f32, sep.json
   atlas-brain.py build <guild-folder>... --out DIR [--gap H] [--chars N] [--min-chars N] [--url URL] [--model M]
   atlas-brain.py self-test
 
@@ -28,6 +29,7 @@ Written to DIR (local data: message text — never commit it):
   gld.u8   uint8 [n], which server             knn.u32  uint32 [n x 4] nearest in meaning, knn_cos.f16 their cosine
   vec.i8   int8 [n x 256] for search           p/<s>.json  64 points a shard: [start_ms, end_ms, thread_or_null, [[ms, who, text, bot], ...]]
   meta.json  counts, groups (room title, server, points, centroid), servers, stats, timings
+  sep.f32  float32 [n x 3], the "separate" layout (one island per room, its own UMAP); sep.json the islands
 
 Prints counts, rates and timings only, never message content.
 """
@@ -397,7 +399,82 @@ def insight(out):
     (out / "insight.json").write_text(json.dumps({"overview": over, "topics": topics}, ensure_ascii=False, separators=(",", ":")))
     say(f"insight: {len(topics)} topics (HDBSCAN min_cluster_size {mcs}), {over['noise_chunks']} chunks in no topic, "
         f"{time.time() - t0:.1f} s → {out / 'insight.json'}")
+    separate(out)
     return over, topics
+
+
+# ── separate: one island per room (the page's Separate / Combined toggle) ─────────────────────────
+# Combined = xyz.f32, every room in one meaning space (where rooms agree). Separate = each room laid out by its OWN
+# UMAP on the same vectors (vec.i8, no re-embedding), as an island of radius ~ cbrt(points), islands packed on a
+# spiral in the x-y plane (facing the page's camera), largest in the middle, grouped by server. Same idea as the agent-os library brain
+# (2026-11-20: one book per cloud vs all books together), with rooms instead of books.
+def separate(out):
+    import numpy as np
+    out = Path(out)
+    meta = json.loads((out / "meta.json").read_text())
+    n, dim = meta["n"], meta["dim"]
+    vec = np.fromfile(out / "vec.i8", np.int8).reshape(n, dim).astype(np.float32)
+    vec /= np.linalg.norm(vec, axis=1, keepdims=True) + 1e-9
+    grp = np.fromfile(out / "grp.u32", np.uint32)
+    t0 = time.time()
+    rng = np.random.default_rng(7)
+    sep = np.zeros((n, 3), np.float32)
+    islands = []
+    order = sorted({int(g) for g in grp.tolist()},
+                   key=lambda g: (meta["groups"][g].get("server", 0), -int((grp == g).sum())))
+    umap_mod = None
+    for g in order:
+        idx = np.flatnonzero(grp == g)
+        m = len(idx)
+        X = vec[idx]
+        if m >= 20:
+            if umap_mod is None:
+                import umap as umap_mod
+            P = umap_mod.UMAP(n_components=3, n_neighbors=min(15, m - 1), min_dist=0.15, metric="cosine",
+                              random_state=7, low_memory=True).fit_transform(X).astype(np.float32)
+            how = "umap"
+        elif m >= 4:   # too few for UMAP: the 3 main directions of the vectors (PCA)
+            Xc = X - X.mean(axis=0)
+            _, _, vt = np.linalg.svd(Xc, full_matrices=False)
+            P = (Xc @ vt[:3].T).astype(np.float32)
+            how = "pca"
+        else:
+            P = rng.normal(0, 1, (m, 3)).astype(np.float32)
+            how = "jitter"
+        P -= P.mean(axis=0)
+        rad = np.linalg.norm(P, axis=1)
+        p95 = float(np.quantile(rad, 0.95)) if m > 1 else 1.0
+        r = 6.0 * m ** (1 / 3)              # island radius grows with the cube root of its size
+        P *= r / (p95 or 1.0)
+        sep[idx] = P
+        islands.append({"g": g, "n": m, "r": round(r, 2), "how": how})
+    # pack the island circles (x-y plane, what the camera faces) on an Archimedean spiral, first fit wins
+    placed = []
+    for isl in islands:
+        r = isl["r"] * 1.15 + 2
+        t = 0.0
+        while True:
+            x, y = 0.9 * t * np.cos(t), 0.9 * t * np.sin(t)
+            if all((x - px) ** 2 + (y - py) ** 2 >= (r + pr) ** 2 for px, py, pr in placed):
+                break
+            t += 0.05
+        placed.append((x, y, r))
+    for isl, (x, y, _) in zip(islands, placed):
+        sep[grp == isl["g"]] += np.array([x, y, 0], np.float32)
+    sep -= sep.mean(axis=0)
+    f = float(100 / (np.abs(sep).max() or 1))
+    sep *= f
+    for isl in islands:   # final centre and radius in map units
+        isl["r"] = round(float(isl["r"]) * f, 2)
+        isl["c"] = [round(float(v), 2) for v in sep[grp == isl["g"]].mean(axis=0)]
+    sep.astype(np.float32).tofile(out / "sep.f32")
+    knn = np.fromfile(out / "knn.u32", np.uint32).reshape(n, -1)
+    cross = float((grp[np.repeat(np.arange(n), knn.shape[1])] != grp[knn.reshape(-1)]).mean())
+    info = {"by": "room", "islands": islands, "cross_room_links": round(cross, 3),
+            "how": {k: sum(1 for i in islands if i["how"] == k) for k in ("umap", "pca", "jitter")}}
+    (out / "sep.json").write_text(json.dumps(info, separators=(",", ":")))
+    say(f"separate: {len(islands)} islands ({info['how']}), cross-room links {cross:.3f}, {time.time() - t0:.1f} s → {out / 'sep.f32'}")
+    return info
 
 # ── cli ─────────────────────────────────────────────────────────────────────
 
@@ -479,6 +556,14 @@ def self_test():
         ok((out / "insight.json").exists() and (out / "topic.u16").stat().st_size == 48, "insight.json + topic.u16 (2 bytes a point)")
         ok(over["counts"]["points"] == 24 and len(over["messages_by_hour_bkk"]) == 24, "overview: counts + 24 hour buckets")
         ok(all(t["keywords"] and len(t["representative"]) <= 5 for t in topics), "every topic has keywords and ≤5 representatives")
+        sep = np.fromfile(out / "sep.f32", np.float32).reshape(-1, 3)
+        info = json.loads((out / "sep.json").read_text())
+        ok(sep.shape == (24, 3) and np.isfinite(sep).all(), "insight also writes sep.f32: 3 floats a point")
+        ok(len(info["islands"]) == 4 and sum(i["n"] for i in info["islands"]) == 24, "one island per room, every point in one")
+        g_ = np.fromfile(out / "grp.u32", np.uint32)
+        cs = [sep[g_ == i["g"]].mean(axis=0) for i in info["islands"]]
+        far = min(np.linalg.norm(a - b) for k_, a in enumerate(cs) for b in cs[k_ + 1:])
+        ok(far > max(i["r"] for i in info["islands"]), "islands do not sit on top of each other")
     say(f"self-test ok ({checks} checks)")
 
 
@@ -492,6 +577,8 @@ if __name__ == "__main__":
         insight(a["out"])
     elif len(sys.argv) > 2 and sys.argv[1] == "insight":
         insight(sys.argv[2])
+    elif len(sys.argv) > 2 and sys.argv[1] == "separate":
+        separate(sys.argv[2])
     elif len(sys.argv) > 1 and sys.argv[1] == "self-test":
         self_test()
     else:

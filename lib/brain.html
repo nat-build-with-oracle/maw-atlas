@@ -54,6 +54,12 @@ svg.i{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2;stroke
 .hits a:hover{color:var(--accent)}.hits a small{color:var(--dim);display:block}
 .tip{position:fixed;pointer-events:none;background:rgba(0,0,0,.82);border:1px solid var(--line);padding:4px 8px;border-radius:6px;font-size:12px;display:none;max-width:340px}
 .status{position:fixed;right:14px;bottom:14px;color:var(--dim);font-size:12px;font-variant-numeric:tabular-nums;pointer-events:none}
+.seg{display:flex;flex:none;height:36px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:3px;gap:3px;backdrop-filter:blur(8px)}
+.seg button{background:none;border:0;color:var(--dim);border-radius:7px;padding:0 9px;cursor:pointer;font:inherit;display:flex;align-items:center;gap:6px;white-space:nowrap}
+.seg button:hover{color:var(--fg)}.seg button.on{background:rgba(124,196,255,.14);color:var(--accent)}
+@media (max-width:1250px){.seg button span{display:none}}
+.isl{position:fixed;left:0;top:0;pointer-events:none;font-size:12px;color:var(--fg);text-shadow:0 0 6px #000,0 0 2px #000;white-space:nowrap;transform:translate(-50%,-100%);opacity:0;transition:opacity .4s}
+.isl small{color:var(--dim)}body.sep .isl{opacity:.92}
 .panel.open~.status{right:calc(min(440px,42vw) + 28px)}
 </style>
 <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"}}</script>
@@ -62,6 +68,7 @@ svg.i{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2;stroke
 <div class="bar">
   <a class="brand" id="home" href="./" title="กลับหน้าหลัก (ล้างทุกอย่าง)"><svg class="i" viewBox="0 0 24 24"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M12 5v13"/></svg>Discord brain <small id="count"></small></a>
   <label class="search"><svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><input id="q" placeholder="ค้นความหมาย… แล้วกด Enter"></label>
+  <div class="seg" id="layoutSeg" title="Combined: every room in one meaning space (where rooms agree) · Separate: each room its own island"><button data-layout="all" class="on"><svg class="i" viewBox="0 0 24 24"><circle cx="9" cy="12" r="5"/><circle cx="15" cy="12" r="5"/></svg><span>Combined</span></button><button data-layout="rooms"><svg class="i" viewBox="0 0 24 24"><circle cx="5" cy="12" r="3"/><circle cx="12" cy="12" r="3"/><circle cx="19" cy="12" r="3"/></svg><span>Separate</span></button></div>
   <button class="btn" id="links" title="เส้นเชื่อม: เปิด / ปิด"><svg class="i" viewBox="0 0 24 24"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.59 13.51 6.83 3.98M15.41 6.51l-6.82 3.98"/></svg><span id="linksLabel">links: on</span></button>
   <button class="btn on" id="spin" title="หมุนอัตโนมัติ: กำลังหมุน (กดเพื่อหยุด)"><svg class="i" viewBox="0 0 24 24" id="spinIcon"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg></button>
   <button class="btn" id="reset" title="ล้างการเลือก (ค้นหา / story / จุดที่เปิด)"><svg class="i" viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
@@ -69,6 +76,7 @@ svg.i{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2;stroke
 <div class="legend"><div class="modes"><button data-m="topic" id="topicBtn">topic</button><button data-m="room" class="on">room</button><button data-m="month">month</button><button data-m="source">source</button><button data-m="server" id="srvBtn">server</button></div><h4 id="legendTitle">Rooms</h4><div id="fams"></div></div>
 <aside class="panel" id="panel"></aside>
 <div class="tip" id="tip"></div>
+<div id="isls"></div>
 <div class="status" id="status">loading…</div>
 <script type="module">
 import * as THREE from "three";
@@ -82,6 +90,9 @@ const [meta, xyz, grp, src, mon, gld, knn] = await Promise.all([
   bin("xyz.f32", Float32Array), bin("grp.u32", Uint32Array), bin("src.u8", Uint8Array), bin("mon.u16", Uint16Array), bin("gld.u8", Uint8Array), bin("knn.u32", Uint32Array),
 ]);
 const servers = meta.servers || [];
+// the Separate layout (scripts/atlas-brain.py separate → sep.f32 + sep.json): one island per room; optional
+const sepInfo = await fetch("/brain/data/sep.json").then((r) => (r.ok ? r.json() : null)).catch(() => null);
+const sepRaw = sepInfo ? await bin("sep.f32", Float32Array) : new Float32Array(0);
 const insight = await fetch("/brain/data/insight.json").then((r) => (r.ok ? r.json() : null));
 const topic = await bin("topic.u16", Uint16Array);
 if (!insight || topic.length !== meta.n) document.getElementById("topicBtn").remove();
@@ -90,8 +101,14 @@ const monLabel = (m) => `${2000 + Math.floor(m / 12)}-${String((m % 12) + 1).pad
 const roomTitle = (gi) => (servers.length > 1 ? `${servers[groups[gi].server]?.name} › ` : "") + groups[gi].title;
 const N = meta.n, groups = meta.groups, K = meta.k || 0;
 // robust scale: a few far outliers set the build's +-100 box, so rescale so that 98% of points sit inside radius 100
-{ const r = new Float32Array(N); for (let i = 0; i < N; i++) r[i] = Math.hypot(xyz[i * 3], xyz[i * 3 + 1], xyz[i * 3 + 2]);
-  const p98 = Float32Array.from(r).sort()[Math.floor(N * 0.98)] || 100; const f = 100 / p98; window.__scale = f; for (let i = 0; i < N * 3; i++) xyz[i] *= f; }
+const robust = (a) => { const r = new Float32Array(N); for (let i = 0; i < N; i++) r[i] = Math.hypot(a[i * 3], a[i * 3 + 1], a[i * 3 + 2]);
+  const p98 = Float32Array.from(r).sort()[Math.floor(N * 0.98)] || 100; const f = 100 / p98; for (let i = 0; i < N * 3; i++) a[i] *= f; return f; };
+window.__scale = robust(xyz);
+// LAYOUTS: the point positions of each layout. xyz becomes the live buffer the GPU draws (a copy of the current
+// layout, or a blend of two while the points glide); every lookup of "where is point i" goes through it.
+const LAYOUTS = { all: Float32Array.from(xyz) };
+if (sepInfo && sepRaw.length === N * 3) { const f = robust(sepRaw); LAYOUTS.rooms = sepRaw; sepInfo.islands.forEach((isl) => { isl.c = isl.c.map((v) => v * f); isl.r *= f; }); }
+else $("layoutSeg").remove();
 $("count").textContent = `${N.toLocaleString()} chunks · ${meta.counts.messages.toLocaleString()} messages · ${meta.counts.rooms} rooms${servers.length > 1 ? ` · ${servers.length} servers` : ""}`;
 const day = (ms) => new Date(ms).toLocaleDateString("en-CA", { timeZone: "Asia/Bangkok" });
 const hm = (ms) => new Date(ms).toLocaleTimeString("en-GB", { timeZone: "Asia/Bangkok", hour: "2-digit", minute: "2-digit" });
@@ -156,19 +173,32 @@ scene.add(pts);
 
 // connected lines: each point to its K nearest in meaning; segments index the points' own buffers, so dimming a
 // point dims its links. Links longer than MAXLEN map units are hidden (near in meaning, far on the map: noise).
-const MAXLEN = 9, pairs = [];
-let longDropped = 0;
+// Each layout keeps its own short links: Combined drops pairs longer than MAXLEN; Separate also drops pairs between
+// two rooms (they would cross the gap between islands) — those are counted as cross-room links instead.
+const MAXLEN = 9, uniq = [];
 if (K) {
   const seen = new Set();
   for (let i = 0; i < N; i++) for (let t = 0; t < K; t++) {
     const j = knn[i * K + t]; if (j >= N || j === i) continue;
     const a = Math.min(i, j), b = Math.max(i, j), key = a * N + b;
-    if (seen.has(key)) continue; seen.add(key);
-    const dx = xyz[a * 3] - xyz[b * 3], dy = xyz[a * 3 + 1] - xyz[b * 3 + 1], dz = xyz[a * 3 + 2] - xyz[b * 3 + 2];
-    if (dx * dx + dy * dy + dz * dz > MAXLEN * MAXLEN) { longDropped++; continue; }
-    pairs.push(a, b);
+    if (!seen.has(key)) { seen.add(key); uniq.push(a, b); }
   }
 }
+const linkSets = {};
+function linksFor(name) {
+  if (linkSets[name]) return linkSets[name];
+  const P = LAYOUTS[name], out = []; let long = 0, cross = 0;
+  for (let k = 0; k < uniq.length; k += 2) {
+    const a = uniq[k], b = uniq[k + 1];
+    if (grp[a] !== grp[b]) cross++;
+    if (name === "rooms" && grp[a] !== grp[b]) continue;
+    const dx = P[a * 3] - P[b * 3], dy = P[a * 3 + 1] - P[b * 3 + 1], dz = P[a * 3 + 2] - P[b * 3 + 2];
+    if (dx * dx + dy * dy + dz * dz > MAXLEN * MAXLEN) { long++; continue; }
+    out.push(a, b);
+  }
+  return (linkSets[name] = { pairs: out, long, cross, total: uniq.length / 2 });
+}
+let pairs = linksFor("all").pairs, longDropped = linksFor("all").long;
 const linkGeo = new THREE.BufferGeometry();
 linkGeo.setAttribute("position", geo.attributes.position);
 linkGeo.setAttribute("color", geo.attributes.color);
@@ -202,9 +232,10 @@ function paint() {
   links.material.opacity = focus ? 0.35 : REST_LINKS;
 }
 $("fams").onclick = (e) => { const el = e.target.closest(".fam"); if (!el) return; const k = +el.dataset.k; on.set(k, !on.get(k)); el.classList.toggle("off"); paint(); };
-function flyTo(i) { const t = new THREE.Vector3(xyz[i * 3], xyz[i * 3 + 1], xyz[i * 3 + 2]); controls.target.copy(t); camera.position.copy(t.clone().add(new THREE.Vector3(0, 10, 45))); controls.autoRotate = false; syncSpin(); }
-const HOME_CAM = camera.position.clone();
-function flyHome() { controls.target.set(0, 0, 0); camera.position.copy(HOME_CAM); }
+function flyTo(i) { const P = LAYOUTS[layout]; const t = new THREE.Vector3(P[i * 3], P[i * 3 + 1], P[i * 3 + 2]); controls.target.copy(t); camera.position.copy(t.clone().add(new THREE.Vector3(0, 10, 45))); controls.autoRotate = false; syncSpin(); }
+// home view per layout: Separate spreads the islands over about ±100 on x and y, so it starts further back
+const HOME_CAM = { all: camera.position.clone(), rooms: new THREE.Vector3(0, 0, 215) };
+function flyHome() { controls.target.set(0, 0, 0); camera.position.copy(HOME_CAM[layout] || HOME_CAM.all); }
 
 // ---- text: shards of meta.shard points, fetched on demand
 const shards = new Map();
@@ -215,16 +246,57 @@ async function point(i) {
 }
 const snip = (ls, n = 110) => ls.map((l) => l[2]).join(" ").replace(/\s+/g, " ").slice(0, n);
 
+// ---- layout: Combined (all) / Separate (rooms). Points glide between the two over GLIDE ms (ease in-out); links
+// switch to the target layout's own set; room names float over the islands in Separate.
+let layout = "all", glide = null;
+const GLIDE = 1200;
+function setLayout(name, instant = false) {
+  if (!LAYOUTS[name]) name = "all";
+  if (name === layout && !glide) return;
+  layout = name;
+  const ls = linksFor(name); pairs = ls.pairs; longDropped = ls.long; linkGeo.setIndex(pairs);
+  document.body.classList.toggle("sep", name === "rooms");
+  document.querySelectorAll("#layoutSeg button").forEach((b) => b.classList.toggle("on", b.dataset.layout === name));
+  if (instant) { xyz.set(LAYOUTS[name]); geo.attributes.position.needsUpdate = true; geo.computeBoundingSphere(); glide = null; return; }
+  glide = { from: Float32Array.from(xyz), to: LAYOUTS[name], t0: performance.now() };
+}
+function stepGlide(now) {
+  if (!glide) return;
+  const u = Math.min(1, (now - glide.t0) / GLIDE), e = u < 0.5 ? 4 * u * u * u : 1 - Math.pow(-2 * u + 2, 3) / 2;
+  const A = glide.from, B = glide.to;
+  for (let k = 0; k < N * 3; k++) xyz[k] = A[k] + (B[k] - A[k]) * e;
+  geo.attributes.position.needsUpdate = true;
+  if (storyLine) drawStory(storyIdsNow);
+  if (u >= 1) { glide = null; geo.computeBoundingSphere(); }
+}
+// room names over the islands (Separate only): the largest 12 islands, short title (no server prefix — the
+// tooltip and the panel still say the server), placed each frame just above the island
+const islEls = (sepInfo?.islands || []).slice().sort((a, b) => b.n - a.n).slice(0, 12).map((isl) => {
+  const el = document.createElement("div"); el.className = "isl";
+  el.innerHTML = `${esc(groups[isl.g].title)} <small>${isl.n.toLocaleString()}</small>`; $("isls").append(el);
+  return { isl, el, v: new THREE.Vector3() };
+});
+function placeIslands() {
+  if (layout !== "rooms") return;
+  for (const o of islEls) {
+    o.v.set(o.isl.c[0], o.isl.c[1] + o.isl.r * 0.9, o.isl.c[2]).project(camera);
+    const vis = o.v.z < 1 && Math.abs(o.v.x) < 1.1 && Math.abs(o.v.y) < 1.1;
+    o.el.style.display = vis ? "block" : "none";
+    if (vis) o.el.style.transform = `translate(${(o.v.x + 1) / 2 * innerWidth}px, ${(1 - o.v.y) / 2 * innerHeight}px) translate(-50%,-100%)`;
+  }
+}
+
 // ---- navigation: everything the user does is a URL state, pushed to history, so Back/Forward work.
-//   ?mode=topic|room|month|source|server  &q=<search>  &story=topic:<id>|room:<i>|q  &p=<point>
+//   ?mode=topic|room|month|source|server  &layout=rooms  &q=<search>  &story=topic:<id>|room:<i>|q  &p=<point>
 // The title link ("Discord brain") goes back to the plain map: no search, no story, no point.
 const DEFAULT_MODE = insight && topic.length === N ? "topic" : "room";
-const stateFromUrl = () => { const u = new URLSearchParams(location.search); return { mode: u.get("mode") || DEFAULT_MODE, q: u.get("q") || "", story: u.get("story") || "", p: u.has("p") ? +u.get("p") : -1 }; };
+const stateFromUrl = () => { const u = new URLSearchParams(location.search); return { mode: u.get("mode") || DEFAULT_MODE, layout: LAYOUTS[u.get("layout")] ? u.get("layout") : "all", q: u.get("q") || "", story: u.get("story") || "", p: u.has("p") ? +u.get("p") : -1 }; };
 let S = stateFromUrl();
 function go(patch, replace = false) {
   const next = { ...S, ...patch };
   const u = new URLSearchParams();
   if (next.mode !== DEFAULT_MODE) u.set("mode", next.mode);
+  if (next.layout && next.layout !== "all") u.set("layout", next.layout);
   if (next.q) u.set("q", next.q);
   if (next.story) u.set("story", next.story);
   if (next.p >= 0) u.set("p", String(next.p));
@@ -251,8 +323,9 @@ function story(key, q) {
   }
   return stories.get(k);
 }
-let storyLine = null;
+let storyLine = null, storyIdsNow = null;
 function drawStory(ids) {
+  storyIdsNow = ids;
   if (storyLine) { scene.remove(storyLine); storyLine.geometry.dispose(); storyLine = null; }
   if (!ids || ids.length < 2) return;
   const pos = new Float32Array(ids.length * 3), c = new Float32Array(ids.length * 3);
@@ -269,6 +342,7 @@ let renderSeq = 0;
 async function render(st) {
   const seq = ++renderSeq; S = st;
   if (st.mode !== mode) setMode(st.mode);
+  if ((st.layout || "all") !== layout) setLayout(st.layout || "all", seq === 1);   // the plain view below then flies to that layout's home
   if ($("q").value !== st.q) $("q").value = st.q;
   let hitsBlock = "", storyBlock = "", storyIds = null, hits = [], kw = [], status = "";
   if (st.q) {
@@ -320,7 +394,10 @@ async function render(st) {
   } else {
     panel.classList.remove("open"); panel.innerHTML = ""; flyHome();
   }
-  $("status").textContent = status || `built ${meta.built.slice(0, 16)} · ${(pairs.length / 2).toLocaleString()} links shown (${longDropped.toLocaleString()} long hidden)`;
+  const ls = linksFor(layout), pct = (x) => `${Math.round((100 * x) / Math.max(1, ls.total))}%`;
+  $("status").textContent = status || (layout === "rooms"
+    ? `separate · ${sepInfo.islands.length} rooms, each its own map · ${(pairs.length / 2).toLocaleString()} links inside rooms · ${ls.cross.toLocaleString()} cross-room links (${pct(ls.cross)}) shown in Combined`
+    : `built ${meta.built.slice(0, 16)} · ${(pairs.length / 2).toLocaleString()} links shown (${longDropped.toLocaleString()} long hidden) · ${pct(ls.cross)} of links join two rooms`);
 }
 
 // ---- every click is a navigation
@@ -331,7 +408,8 @@ $("panel").onclick = (e) => {
   const a = e.target.closest("a[data-i]"); if (a) { e.preventDefault(); go({ p: +a.dataset.i }); }
 };
 $("q").onkeydown = (e) => { const q = e.target.value.trim(); if (e.key === "Enter" && q) go({ q, p: -1, story: "" }); };
-$("home").onclick = (e) => { e.preventDefault(); go({ mode: DEFAULT_MODE, q: "", story: "", p: -1 }); };
+$("home").onclick = (e) => { e.preventDefault(); go({ mode: DEFAULT_MODE, layout: "all", q: "", story: "", p: -1 }); };
+$("layoutSeg")?.addEventListener("click", (e) => { const b = e.target.closest("button[data-layout]"); if (b && b.dataset.layout !== (S.layout || "all")) go({ layout: b.dataset.layout }); });
 $("reset").onclick = () => go({ q: "", story: "", p: -1 });
 // auto-rotate button shows its state: pause icon while spinning, play icon when stopped (it no longer looks like reset)
 const PAUSE = '<rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/>', PLAY = '<path d="M7 5v14l11-7z"/>';
@@ -396,8 +474,10 @@ addEventListener("resize", () => { camera.aspect = innerWidth / innerHeight; cam
 setMode(S.mode);
 history.replaceState(S, "", location.href);
 await render(S);
-window.__brain = { N, links: pairs.length / 2, longDropped, rooms: groups.length, servers: servers.length, state: () => S, project: (i) => { const v = new THREE.Vector3(xyz[i * 3], xyz[i * 3 + 1], xyz[i * 3 + 2]).project(camera); return [(v.x + 1) / 2 * innerWidth, (1 - v.y) / 2 * innerHeight]; }, hover: () => hover, story: () => storyLine ? storyLine.geometry.attributes.position.count : 0 };
-renderer.setAnimationLoop(() => { controls.update(); renderer.render(scene, camera); });
+window.__brain = { N, links: pairs.length / 2, longDropped, rooms: groups.length, servers: servers.length, state: () => S, project: (i) => { const v = new THREE.Vector3(xyz[i * 3], xyz[i * 3 + 1], xyz[i * 3 + 2]).project(camera); return [(v.x + 1) / 2 * innerWidth, (1 - v.y) / 2 * innerHeight]; }, hover: () => hover, story: () => storyLine ? storyLine.geometry.attributes.position.count : 0,
+  layout: () => ({ name: layout, gliding: !!glide, layouts: Object.keys(LAYOUTS), links: pairs.length / 2, labels: islEls.filter((o) => o.el.style.display === "block").length }),
+  at: (i) => [xyz[i * 3], xyz[i * 3 + 1], xyz[i * 3 + 2]] };
+renderer.setAnimationLoop((now) => { stepGlide(now); controls.update(); placeIslands(); renderer.render(scene, camera); });
 </script>
 </body>
 </html>

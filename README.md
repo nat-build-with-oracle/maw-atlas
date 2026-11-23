@@ -140,6 +140,7 @@ for h in t.search(vec("ราคาเบียร์ต่อแก้ว")).li
 maw atlas brain build my server                         # → <guild folder>/brain
 maw atlas brain build <folder A> <folder B> --out=~/atlas-brain   # several servers, one map
 maw atlas brain serve my server                         # http://127.0.0.1:7720/brain/
+maw atlas brain ontology my server                      # Apache Ossie YAML → <guild folder>/brain/ontology/
 ```
 
 - **One point = one conversation chunk**: consecutive messages of one room or thread, cut on 3 h of silence, up to
@@ -155,6 +156,11 @@ maw atlas brain serve my server                         # http://127.0.0.1:7720/
   **Story**: "📖 story of topic / room / these hits" lists the chunks oldest first and draws them as a line on the map
   (blue = old, red = new); earlier/later then walk the story. **Every click is a URL** (`?mode=&q=&story=&p=`), so Back
   and Forward work and a view can be bookmarked; the "Discord brain" title goes back to the plain map.
+  **Combined / Separate** (top bar, `?layout=rooms`): Combined is the one meaning map of every room (where rooms
+  agree; the status line counts the links that join two rooms). Separate gives each room its own island, laid out by
+  its own UMAP on the same vectors, room names on the largest twelve; the points glide between the two. `brain insight`
+  writes `sep.f32` + `sep.json` (UMAP for rooms of 20+ chunks, PCA for 4-19, a small cluster below that); an older
+  brain gets it from `brain insight <brain dir>` without re-embedding.
 - **Topics** (`brain insight`, also run by `build`): HDBSCAN on the map + c-TF-IDF keywords (Thai words from
   PyThaiNLP `newmm`; names, fillers and stopwords removed) — the BERTopic recipe. Per topic: keywords, size, rooms,
   people, first/last day, and "rising" (share in the last 14 days ÷ the overall share). Colour mode `topic`.
@@ -171,6 +177,12 @@ maw atlas brain serve my server                         # http://127.0.0.1:7720/
   | `/brain/api/story?topic=<id>\|room=<i>\|q=...` | the same chunks in **time order**, oldest first ("the timestamp is the truth"): markdown for an LLM to retell, or `?format=json` ordered ids |
 
   `curl -s 127.0.0.1:7720/brain/api/topics/2 | <your LLM CLI> "summarize"` — the server never calls a model itself.
+- **Ontology** (`brain ontology`, also served at `/brain/api/ontology`): the archive described in
+  [Apache Ossie](https://github.com/apache/ossie) 0.3.0.dev0 — `discord.ontology.yaml` (Server, Room, Thread, Person,
+  Message, Chunk, Topic and how they relate, each relationship with a sentence), `discord.semantic_model.yaml`
+  (datasets over `server.sqlite` and the brain folder, keys, joins, metrics such as active people and bot share,
+  `ai_context` pointing at `/brain/api`) and `discord.mapping.yaml`. Schema only: no message text, names or ids. All
+  three pass apache/ossie `validation/validate.py` (the test runs it when the checkout is on the machine).
 - **Local only**: binds 127.0.0.1 (or a tailscale 100.x address via `--host`); the brain folder holds message text.
 - Needs `uv` (numpy + umap-learn, Python 3.12). Recipe from the fleet's brains: book-library, facebook-oracle, kindle-capture.
 
@@ -215,7 +227,8 @@ initial 2026-07-15 build, not part of the daily-driver CLI workflow.
 ```
 git clone https://github.com/nat-build-with-oracle/maw-atlas && cd maw-atlas
 bun index.ts --help                  # run the plugin from the checkout
-bun test                             # tests/ — names, embed targets, extract + resume, LanceDB + brain self-tests (need uv)
+bun test                             # tests/ — names, embed targets, extract + resume, LanceDB + brain self-tests (need uv),
+                                     # brain.html in headless Chrome (skipped without Chrome or the three.js CDN), Ossie validator
 uv run --with lancedb --with pyarrow python -I scripts/atlas-lance.py self-test   # the LanceDB writer alone
 ```
 
