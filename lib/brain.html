@@ -138,6 +138,9 @@ const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 20
 camera.position.set(0, 25, 150);   // close enough that the main cloud fills the view
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true; controls.autoRotate = true; controls.autoRotateSpeed = 0.35;
+// left-drag rotation is ours (below): it turns the scene around the point under the mouse, not the screen centre.
+// OrbitControls keeps right-drag pan and wheel zoom — zooming toward the cursor.
+controls.enableRotate = false; controls.zoomToCursor = true; controls.screenSpacePanning = true;
 
 const sprite = (() => { const c = document.createElement("canvas"); c.width = c.height = 64; const g = c.getContext("2d");
   const r = g.createRadialGradient(32, 32, 0, 32, 32, 32); r.addColorStop(0, "rgba(255,255,255,1)"); r.addColorStop(0.35, "rgba(255,255,255,.55)"); r.addColorStop(1, "rgba(255,255,255,0)");
@@ -185,13 +188,16 @@ function setMode(m) {
   paint();
 }
 function visible(i) { return on.get(keyOf(i)) !== false; }
+// resting brightness: a 100k-point map must stay faint or it turns white; a few thousand points can glow like the
+// focus view (Nat 2026-11-23: the lit story view is "the best reference")
+const REST = N > 20000 ? 1 : N > 5000 ? 1.25 : 1.6, REST_LINKS = N > 20000 ? 0.035 : N > 5000 ? 0.09 : 0.2;
 function paint() {
   for (let i = 0; i < N; i++) {
-    const k = !visible(i) ? 0.03 : focus ? (focusStrong?.has(i) ? 2.4 : focus.has(i) ? 1.6 : 0.025) : 1;
+    const k = !visible(i) ? 0.03 : focus ? (focusStrong?.has(i) ? 2.4 : focus.has(i) ? 1.6 : 0.025) : REST;
     col[i * 3] = base[i * 3] * k; col[i * 3 + 1] = base[i * 3 + 1] * k; col[i * 3 + 2] = base[i * 3 + 2] * k;
   }
   geo.attributes.color.needsUpdate = true;
-  links.material.opacity = focus ? 0.35 : 0.035;
+  links.material.opacity = focus ? 0.35 : REST_LINKS;
 }
 $("fams").onclick = (e) => { const el = e.target.closest(".fam"); if (!el) return; const k = +el.dataset.k; on.set(k, !on.get(k)); el.classList.toggle("off"); paint(); };
 function flyTo(i) { const t = new THREE.Vector3(xyz[i * 3], xyz[i * 3 + 1], xyz[i * 3 + 2]); controls.target.copy(t); camera.position.copy(t.clone().add(new THREE.Vector3(0, 10, 45))); controls.autoRotate = false; }
@@ -341,15 +347,47 @@ addEventListener("pointermove", (e) => {
   if (hover >= 0) { t.style.display = "block"; t.style.left = e.clientX + 12 + "px"; t.style.top = e.clientY + 12 + "px"; t.textContent = `${roomTitle(grp[hover])} · ${monLabel(mon[hover])}${insight && topic[hover] !== 65535 ? ` · topic ${topic[hover]}: ${insight.topics[topic[hover]].label}` : ""}`; }
   else t.style.display = "none";
 });
-renderer.domElement.addEventListener("pointerdown", (e) => { down = [e.clientX, e.clientY]; });
+// ---- rotate around the point under the mouse: the pivot is the point hit at pointerdown (or, on empty space, the spot
+// on the plane through the current target); camera and target turn rigidly around it, so it stays under the cursor
+let drag = null;
+const pivotAt = (x, y) => {
+  mouse.set((x / innerWidth) * 2 - 1, -(y / innerHeight) * 2 + 1);
+  ray.setFromCamera(mouse, camera);
+  const hit = ray.intersectObject(pts).find((h) => visible(h.index));
+  if (hit) return new THREE.Vector3(xyz[hit.index * 3], xyz[hit.index * 3 + 1], xyz[hit.index * 3 + 2]);
+  const n = camera.getWorldDirection(new THREE.Vector3());
+  const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(n, controls.target);
+  return ray.ray.intersectPlane(plane, new THREE.Vector3()) || controls.target.clone();
+};
+renderer.domElement.addEventListener("pointerdown", (e) => {
+  down = [e.clientX, e.clientY];
+  if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey) return;   // right/modified drag = OrbitControls pan
+  drag = { x: e.clientX, y: e.clientY, pivot: pivotAt(e.clientX, e.clientY) };
+  controls.autoRotate = false;
+  renderer.domElement.setPointerCapture(e.pointerId);
+});
+renderer.domElement.addEventListener("pointermove", (e) => {
+  if (!drag) return;
+  const dx = e.clientX - drag.x, dy = e.clientY - drag.y; drag.x = e.clientX; drag.y = e.clientY;
+  const speed = (2 * Math.PI) / renderer.domElement.clientHeight;
+  const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0);
+  const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -dx * speed)
+    .multiply(new THREE.Quaternion().setFromAxisAngle(right, -dy * speed));
+  const P = drag.pivot;
+  camera.position.sub(P).applyQuaternion(q).add(P);
+  controls.target.sub(P).applyQuaternion(q).add(P);
+  camera.quaternion.premultiply(q);
+});
+const endDrag = (e) => { if (drag) { drag = null; try { renderer.domElement.releasePointerCapture(e.pointerId); } catch {} } };
+renderer.domElement.addEventListener("pointercancel", endDrag);
 // a click on a point keeps a running story or search (its panel lists stay), otherwise it opens the point alone
-renderer.domElement.addEventListener("pointerup", (e) => { if (down && Math.hypot(e.clientX - down[0], e.clientY - down[1]) < 4 && hover >= 0) go({ p: hover }); down = null; });
+renderer.domElement.addEventListener("pointerup", (e) => { endDrag(e); if (down && Math.hypot(e.clientX - down[0], e.clientY - down[1]) < 4 && hover >= 0) go({ p: hover }); down = null; });
 addEventListener("resize", () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
 
 setMode(S.mode);
 history.replaceState(S, "", location.href);
 await render(S);
-window.__brain = { N, links: pairs.length / 2, longDropped, rooms: groups.length, servers: servers.length, state: () => S, story: () => storyLine ? storyLine.geometry.attributes.position.count : 0 };
+window.__brain = { N, links: pairs.length / 2, longDropped, rooms: groups.length, servers: servers.length, state: () => S, project: (i) => { const v = new THREE.Vector3(xyz[i * 3], xyz[i * 3 + 1], xyz[i * 3 + 2]).project(camera); return [(v.x + 1) / 2 * innerWidth, (1 - v.y) / 2 * innerHeight]; }, hover: () => hover, story: () => storyLine ? storyLine.geometry.attributes.position.count : 0 };
 renderer.setAnimationLoop(() => { controls.update(); renderer.render(scene, camera); });
 </script>
 </body>
