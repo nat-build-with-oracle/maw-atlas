@@ -25,6 +25,8 @@ canvas{display:block}
 .search input{background:none;border:0;outline:0;color:var(--fg);width:260px;font:inherit}
 .btn{background:var(--panel);border:1px solid var(--line);color:var(--fg);border-radius:10px;padding:7px 9px;cursor:pointer;display:flex;align-items:center;gap:6px;backdrop-filter:blur(8px);font:inherit}
 .btn:hover{border-color:rgba(255,255,255,.25)}
+.btn:disabled{cursor:default;opacity:.4}.btn:disabled:hover{border-color:var(--line)}
+canvas.on-point{cursor:pointer}
 svg.i{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 .legend{position:fixed;left:14px;bottom:14px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 12px;max-height:52vh;overflow:auto;backdrop-filter:blur(8px);width:270px}
 .legend h4{margin:0 0 6px;font-size:12px;color:var(--dim);font-weight:500;text-transform:uppercase;letter-spacing:.08em;display:flex;gap:6px;align-items:center}
@@ -240,11 +242,12 @@ $("spin").onclick = () => { controls.autoRotate = !controls.autoRotate; };
 const ray = new THREE.Raycaster(); ray.params.Points.threshold = N > 20000 ? 0.7 : 1.2;
 const mouse = new THREE.Vector2(); let hover = -1, down = null;
 addEventListener("pointermove", (e) => {
-  if (e.target !== renderer.domElement) { $("tip").style.display = "none"; hover = -1; return; }
+  if (e.target !== renderer.domElement) { $("tip").style.display = "none"; hover = -1; renderer.domElement.classList.remove("on-point"); return; }
   mouse.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
   ray.setFromCamera(mouse, camera);
   const hit = ray.intersectObject(pts).find((h) => visible(h.index));
   hover = hit ? hit.index : -1;
+  renderer.domElement.classList.toggle("on-point", hover >= 0);   // a point is clickable: hand cursor
   const t = $("tip");
   if (hover >= 0) { t.style.display = "block"; t.style.left = e.clientX + 12 + "px"; t.style.top = e.clientY + 12 + "px"; t.textContent = `${roomTitle(grp[hover])} · ${monLabel(mon[hover])}${insight && topic[hover] !== 65535 ? ` · topic ${topic[hover]}: ${insight.topics[topic[hover]].label}` : ""}`; }
   else t.style.display = "none";
