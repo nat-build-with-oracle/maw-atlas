@@ -6,6 +6,7 @@
  *   POST /brain/search      {query, k}: the query embedded by the same server + model as the build (query prompt,
  *                           first 256 dims renormalised), cosine over vec.i8, plus plain substring matches
  *   POST /brain/reload      re-read the folder after a rebuild, no restart
+ *   GET  /brain/api/...     overview, topics, LLM-ready bundles (topic / room / search), report.md — lib/brain-api.ts
  *
  * The data is private message text: the bind is 127.0.0.1 unless --host names a tailscale 100.x address
  * (lib/viewer.ts allowedHost — the same rule as `maw atlas view`). Ported from laris-co/facebook-oracle brain/server.ts.
@@ -13,6 +14,7 @@
 import { existsSync } from "fs";
 import { join, normalize } from "path";
 import { allowedHost } from "./viewer";
+import { brainApi, type BrainData } from "./brain-api";
 
 const PAGE = join(import.meta.dir, "brain.html");
 
@@ -34,14 +36,21 @@ export async function startBrain(dir: string, opts: { host?: string; port?: numb
   const host = opts.host ?? "127.0.0.1";
   if (!allowedHost(host)) throw new Error(`refusing to bind ${host} — use 127.0.0.1 or a tailscale 100.x address`);
 
-  let meta: Meta, vec: Int8Array, texts: string[];
+  let meta: Meta, vec: Int8Array, texts: string[], points: any[], grp: Uint32Array, topic: Uint16Array | null, insight: any | null;
   const load = async () => {
     meta = await Bun.file(join(dir, "meta.json")).json();
     vec = new Int8Array(await Bun.file(join(dir, "vec.i8")).arrayBuffer());
+    grp = new Uint32Array(await Bun.file(join(dir, "grp.u32")).arrayBuffer());
+    topic = existsSync(join(dir, "topic.u16")) ? new Uint16Array(await Bun.file(join(dir, "topic.u16")).arrayBuffer()) : null;
+    insight = existsSync(join(dir, "insight.json")) ? await Bun.file(join(dir, "insight.json")).json() : null;
     texts = new Array(meta.n);
+    points = new Array(meta.n);
     for (let s = 0; s < Math.ceil(meta.n / meta.shard); s++) {
       const part: any[] = await Bun.file(join(dir, "p", `${s}.json`)).json();
-      part.forEach((p, j) => { texts[s * meta.shard + j] = ((p[2] || "") + "\n" + p[3].map((l: any[]) => l[2]).join("\n")).toLowerCase(); });
+      part.forEach((p, j) => {
+        points[s * meta.shard + j] = p;
+        texts[s * meta.shard + j] = ((p[2] || "") + "\n" + p[3].map((l: any[]) => l[2]).join("\n")).toLowerCase();
+      });
     }
   };
   await load();
@@ -95,6 +104,13 @@ export async function startBrain(dir: string, opts: { host?: string; port?: numb
     if (path === "/" || path === "/brain") return Response.redirect("/brain/", 302);
     if (path === "/brain/" || path === "/brain/index.html") return file(PAGE);
     if (path.startsWith("/brain/data/")) return file(inside(dir, path.slice("/brain/data/".length)));
+    if (path.startsWith("/brain/api")) {
+      const data: BrainData = { meta, insight, points, grp, topic, search: async (q, k) => {
+        const v = await embedQuery(q);
+        return { hits: v ? topK(v, k) : [], from: v ? `${meta.model} @ ${embedUrl()}` : "none (embed server down)" };
+      } };
+      return (await brainApi(data, path, url)) ?? new Response("not found", { status: 404 });
+    }
     if (path === "/brain/reload" && req.method === "POST") { await load(); return Response.json({ ok: true, n: meta.n }); }
     if (path === "/brain/search" && req.method === "POST") {
       const { query, k = 60 } = ((await req.json().catch(() => ({}))) || {}) as { query?: string; k?: number };

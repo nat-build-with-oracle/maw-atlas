@@ -2,6 +2,7 @@
 """atlas-brain — a Discord server (or several) as a 3D meaning map, for `maw atlas brain` (run through uv).
 
 usage:
+  atlas-brain.py insight <brain dir>     topics (HDBSCAN + c-TF-IDF) + stats → insight.json, topic.u16
   atlas-brain.py build <guild-folder>... --out DIR [--gap H] [--chars N] [--min-chars N] [--url URL] [--model M]
   atlas-brain.py self-test
 
@@ -271,6 +272,133 @@ def build(folders, out, gap=3.0, chars=1200, min_chars=40, url=DEFAULT_URL, mode
     return meta
 
 
+
+# ── insight: topics (HDBSCAN on the map + c-TF-IDF keywords) and old-school stats ──────────────
+# BERTopic's recipe (embed → UMAP → HDBSCAN → c-TF-IDF), run on the brain folder that build wrote: no re-embedding.
+# Thai has no spaces, so words come from PyThaiNLP's newmm tokenizer; Latin words from a regex.
+
+EN_STOP = set("""a an and are as at be but by for from has have i if in into is it its me my no not of on or our so that
+the their them then there these they this to too up us was we were what when which who will with you your ok okay yes
+just can do does did get got like also more very all any been one would should could about than out how""".split())
+
+
+FILLERS = set("พี่ ผม หนู เรา เค้า ทำ เงี้ย งี้ ไอ้ เดี๋ยว ไหม มั้ย บอ เอ่อ อะ อ่า อ่ะ อืม อือ อ้า ครับ คับ ค่ะ คะ นะ น่ะ จ้า จ้ะ ฮะ เนี่ย อ่ะนะ แบบ ก็ คือ มัน เลย ละ แล้ว".split())
+
+
+def tokenizer(names=()):
+    import re
+    from pythainlp.corpus import thai_stopwords
+    from pythainlp.tokenize import word_tokenize
+    stop = set(thai_stopwords()) | EN_STOP | FILLERS
+    for nm in names:   # people's names say who talked, not what about
+        stop.update(w for w in re.split(r"[^\w]+", nm.lower()) if len(w) >= 2)
+    url = re.compile(r"https?://\S+|<[@#:!&][^>]*>|`[^`]*`")
+    mirror = re.compile(r"\d{1,2}/\d{1,2}/\d{4},? \d{1,2}:\d{2} - [^-\n]{1,40} - ")   # a mirrored chat line's "date - name - "
+    latin = re.compile(r"[a-z][a-z0-9_+.-]{1,}")
+
+    def words(text):
+        text = url.sub(" ", mirror.sub(" ", text)).lower()
+        out = []
+        for tok in word_tokenize(text, engine="newmm", keep_whitespace=False):
+            tok = tok.strip(" .,:;!?()[]{}\"'*_~|>-")
+            if len(tok) < 2 or tok in stop or tok.isdigit():
+                continue
+            if tok.isascii():
+                out.extend(w for w in latin.findall(tok) if w not in stop)
+            else:
+                out.append(tok)
+        return out
+    return words
+
+
+def insight(out):
+    import numpy as np
+    from collections import Counter, defaultdict
+    from sklearn.cluster import HDBSCAN
+    out = Path(out)
+    meta = json.loads((out / "meta.json").read_text())
+    n, dim = meta["n"], meta["dim"]
+    xyz = np.fromfile(out / "xyz.f32", np.float32).reshape(n, 3)
+    vec = np.fromfile(out / "vec.i8", np.int8).reshape(n, dim).astype(np.float32)
+    vec /= np.linalg.norm(vec, axis=1, keepdims=True) + 1e-9
+    grp = np.fromfile(out / "grp.u32", np.uint32)
+    src = np.fromfile(out / "src.u8", np.uint8)
+    pts = []
+    for s_ in range(0, n, meta["shard"]):
+        pts.extend(json.loads((out / "p" / f"{s_ // meta['shard']}.json").read_text()))
+    t0 = time.time()
+
+    mcs = max(8, n // 80)
+    labels = HDBSCAN(min_cluster_size=mcs, min_samples=max(3, mcs // 3)).fit_predict(xyz)
+    topics_ids = sorted(set(labels.tolist()) - {-1}, key=lambda t: -(labels == t).sum())
+    remap = {t: i for i, t in enumerate(topics_ids)}
+    topic = np.array([remap.get(int(l), 65535) for l in labels], np.uint16)
+    topic.tofile(out / "topic.u16")
+
+    names = {l[1] for p in pts for l in p[3]}
+    for p in pts:   # names inside mirrored lines ("22/11/2026 08:25 - Some One - text")
+        for l in p[3]:
+            for m in __import__("re").finditer(r"\d{1,2}/\d{1,2}/\d{4},? \d{1,2}:\d{2} - ([^-\n]{1,40}) - ", l[2]):
+                names.add(m.group(1).strip())
+    words = tokenizer(names)
+    toks = [words("\n".join(l[2] for l in p[3])) for p in pts]
+    per = [Counter() for _ in topics_ids]
+    for i, t in enumerate(topic):
+        if t != 65535:
+            per[t].update(toks[i])
+    total = Counter()
+    for c in per:
+        total.update(c)
+    avg = (sum(total.values()) / max(1, len(per))) or 1
+    bkk = lambda ms: time.gmtime(ms / 1000 + 7 * 3600)   # Asia/Bangkok
+    day = lambda ms: time.strftime("%Y-%m-%d", bkk(ms))
+    last_ms = max(p[1] for p in pts)
+
+    topics = []
+    for ti, c in enumerate(per):
+        idx = np.where(topic == ti)[0]
+        size = sum(c.values()) or 1
+        score = {w: (f / size) * np.log(1 + avg / total[w]) for w, f in c.items() if f >= 2}
+        kw = [w for w, _ in sorted(score.items(), key=lambda x: -x[1])[:10]]
+        cen = vec[idx].mean(axis=0)
+        cen /= np.linalg.norm(cen) + 1e-9
+        rep = idx[np.argsort(-(vec[idx] @ cen))[:5]].tolist()
+        rooms = Counter(meta["groups"][grp[i]]["title"] for i in idx).most_common(4)
+        people = Counter(l[1] for i in idx for l in pts[i][3] if not l[3]).most_common(5)
+        recent = sum(1 for i in idx if last_ms - pts[i][1] < 14 * 86400_000)
+        topics.append({"id": ti, "label": " · ".join(kw[:3]), "keywords": kw, "chunks": int(len(idx)),
+                       "messages": int(sum(len(pts[i][3]) for i in idx)),
+                       "first": day(min(pts[i][0] for i in idx)), "last": day(max(pts[i][1] for i in idx)),
+                       "rooms": rooms, "people": people, "bot_share": round(float((src[idx] > 0).mean()), 2),
+                       "recent_share": round(recent / len(idx), 2), "representative": rep,
+                       "centroid_xyz": [round(float(v), 1) for v in xyz[idx].mean(axis=0)]})
+    all_recent = sum(1 for p in pts if last_ms - p[1] < 14 * 86400_000) / n
+    for t in topics:
+        t["rising"] = round(t["recent_share"] / all_recent, 2) if all_recent else None
+
+    hours, days, authors, bots = Counter(), Counter(), Counter(), Counter()
+    for p in pts:
+        for ms, who, _, bot in p[3]:
+            hours[bkk(ms).tm_hour] += 1
+            days[day(ms)] += 1
+            (bots if bot else authors)[who] += 1
+    rooms_all = Counter(meta["groups"][g]["title"] for g in grp.tolist())
+    over = {"built": meta["built"], "counts": meta["counts"], "stats": meta["stats"], "unit": meta["unit"],
+            "servers": [s_["name"] for s_ in meta.get("servers", [])],
+            "first_day": min(days), "last_day": max(days), "active_days": len(days),
+            "messages_by_hour_bkk": [hours.get(h, 0) for h in range(24)],
+            "messages_by_day": sorted(days.items()), "busiest_days": days.most_common(5),
+            "top_rooms_by_chunks": rooms_all.most_common(10), "top_people": authors.most_common(10),
+            "top_bots": bots.most_common(5),
+            "bot_message_share": round(sum(bots.values()) / max(1, sum(bots.values()) + sum(authors.values())), 3),
+            "topics": len(topics), "noise_chunks": int((topic == 65535).sum()),
+            "clustering": {"method": "HDBSCAN on the 3D map", "min_cluster_size": mcs},
+            "keywords": "c-TF-IDF over PyThaiNLP newmm + latin words, stopwords removed"}
+    (out / "insight.json").write_text(json.dumps({"overview": over, "topics": topics}, ensure_ascii=False, separators=(",", ":")))
+    say(f"insight: {len(topics)} topics (HDBSCAN min_cluster_size {mcs}), {over['noise_chunks']} chunks in no topic, "
+        f"{time.time() - t0:.1f} s → {out / 'insight.json'}")
+    return over, topics
+
 # ── cli ─────────────────────────────────────────────────────────────────────
 
 def parse(argv):
@@ -347,6 +475,10 @@ def self_test():
         ok("botty" not in (out / "meta.json").read_text() and meta["owner"] == "nat", "owner = most active person")
         again = build(folders, out, url="fake:768", model="m")
         ok(again["counts"]["embedded_now"] == 0, "rebuild embeds 0 (cache)")
+        over, topics = insight(out)
+        ok((out / "insight.json").exists() and (out / "topic.u16").stat().st_size == 48, "insight.json + topic.u16 (2 bytes a point)")
+        ok(over["counts"]["points"] == 24 and len(over["messages_by_hour_bkk"]) == 24, "overview: counts + 24 hour buckets")
+        ok(all(t["keywords"] and len(t["representative"]) <= 5 for t in topics), "every topic has keywords and ≤5 representatives")
     say(f"self-test ok ({checks} checks)")
 
 
@@ -357,6 +489,9 @@ if __name__ == "__main__":
             if not (Path(f) / "server.sqlite").exists():
                 raise SystemExit(f"{f}: no server.sqlite — run `maw atlas download <guild> --out` first")
         build(a["folders"], a["out"], a["gap"], a["chars"], a["min_chars"], a["url"], a["model"])
+        insight(a["out"])
+    elif len(sys.argv) > 2 and sys.argv[1] == "insight":
+        insight(sys.argv[2])
     elif len(sys.argv) > 1 and sys.argv[1] == "self-test":
         self_test()
     else:

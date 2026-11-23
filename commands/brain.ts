@@ -30,7 +30,8 @@ export const meta: CommandMeta = {
     "brain build <guild folder|guildId|guild name>...   chunks → vectors (cached) → UMAP 3D → <folder>/brain (or --out=DIR for several)",
     "--gap=3 --chars=1200 --min-chars=40   the chunk: hours of silence that cut it, max and min characters",
     "--url=URL --model=M   embed server (default Chippy http://127.0.0.1:11445 embeddinggemma:ane-w8a16)",
-    "brain serve <brain dir|guild folder|guild name> [--port=7720] [--host=127.0.0.1]   the three.js page",
+    "brain insight <brain dir|guild>   topics (HDBSCAN + c-TF-IDF, Thai via PyThaiNLP) + activity stats → insight.json (build runs it too)",
+    "brain serve <brain dir|guild folder|guild name> [--port=7720] [--host=127.0.0.1]   the three.js page + /brain/api (overview, topics, LLM bundles, report.md)",
   ],
   tokenRequirement: "none",
 };
@@ -42,7 +43,9 @@ function usage(log: Log) {
   log("       maw atlas brain serve <brain dir|guild folder|guild name> [--port=7720] [--host=127.0.0.1]");
   log("  build: one point per conversation chunk (room/thread, cut on 3 h of silence), EmbeddingGemma on Chippy (ANE), UMAP 3D");
   log("         one server → <guild folder>/brain; several → --out=DIR (required). needs uv (numpy, umap-learn)");
-  log("  serve: three.js page, colour by room / month / source / server, click to read, search by meaning + words");
+  log("       maw atlas brain insight <brain dir|guild>   topics + stats → insight.json (build runs it too)");
+  log("  serve: three.js page, colour by topic / room / month / source / server, click to read, search by meaning + words");
+  log("         /brain/api: overview, topics, topics/:id + rooms/:i + context?q= (LLM-ready markdown), report.md");
 }
 
 async function pump(stream: ReadableStream<Uint8Array>, log: Log) {
@@ -79,14 +82,31 @@ async function build(log: Log, args: string[]) {
   }
   const script = join(import.meta.dir, "..", "scripts", "atlas-brain.py");
   const proc = Bun.spawn(
-    [uv, "run", "--quiet", "--no-project", "--python", "3.12", "--with", "numpy", "--with", "umap-learn",
-      "python", "-I", "-W", "ignore", script, "build", ...folders.map(f => f.dir), ...pass],
+    pyCmd(uv, script, ["build", ...folders.map(f => f.dir), ...pass]),
     { stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, PYTHONUNBUFFERED: "1" } },
   );
   await Promise.all([pump(proc.stdout, log), pump(proc.stderr, log)]);
   const code = await proc.exited;
   if (code !== 0) throw new Error(`atlas-brain.py exited ${code}`);
   log(`serve it: maw atlas brain serve ${out}`);
+}
+
+function pyCmd(uv: string, script: string, rest: string[]) {
+  return [uv, "run", "--quiet", "--no-project", "--python", "3.12", "--with", "numpy", "--with", "umap-learn", "--with", "scikit-learn",
+    "--with", "pythainlp", "python", "-I", "-W", "ignore", script, ...rest];
+}
+
+async function insightCmd(log: Log, args: string[]) {
+  const t = args.slice(2).filter(a => !a.startsWith("--")).join(" ");
+  if (!t) return usage(log);
+  const uv = Bun.which("uv");
+  if (!uv) throw new Error("brain insight needs uv — brew install uv");
+  const dir = existsSync(join(t, "meta.json")) ? t : join(resolveGuildFolders(log, groupTargets(t.split(" ")), flag(args, "from") || blobDir())[0].dir, "brain");
+  const proc = Bun.spawn(pyCmd(uv, join(import.meta.dir, "..", "scripts", "atlas-brain.py"), ["insight", resolve(dir)]),
+    { stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, PYTHONUNBUFFERED: "1" } });
+  await Promise.all([pump(proc.stdout, log), pump(proc.stderr, log)]);
+  if ((await proc.exited) !== 0) throw new Error("atlas-brain.py insight failed");
+  log("served pages pick it up after: curl -X POST <page>/brain/reload (or restart serve)");
 }
 
 async function serve(log: Log, args: string[]) {
@@ -109,6 +129,7 @@ export async function run(log: Log, _token: string, args: string[]) {
   const sub = args[1];
   if (sub === "build") return build(log, args);
   if (sub === "serve") return serve(log, args);
+  if (sub === "insight") return insightCmd(log, args);
   usage(log);
   if (sub) throw new Error(`unknown: brain ${sub}`);
 }

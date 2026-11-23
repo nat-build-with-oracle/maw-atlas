@@ -152,6 +152,21 @@ maw atlas brain serve my server                         # http://127.0.0.1:7720/
   script shows `links_same_script` near 1.0 while random is lower.
 - **Page** (three.js): colour by room / month / source (people, bots, both) / server, click a point to read the chunk
   with earlier/later, search by meaning (query prompt, same embed server) plus plain words.
+- **Topics** (`brain insight`, also run by `build`): HDBSCAN on the map + c-TF-IDF keywords (Thai words from
+  PyThaiNLP `newmm`; names, fillers and stopwords removed) — the BERTopic recipe. Per topic: keywords, size, rooms,
+  people, first/last day, and "rising" (share in the last 14 days ÷ the overall share). Colour mode `topic`.
+- **API for people and LLMs** (`/brain/api`, read-only, nothing leaves the machine):
+
+  | endpoint | gives |
+  |---|---|
+  | `/brain/api/overview` | counts, dates, messages by hour (Asia/Bangkok) and day, top rooms / people / bots |
+  | `/brain/api/topics` | every topic with its keywords and stats |
+  | `/brain/api/topics/<id>` | LLM-ready markdown: an instruction line, keywords, stats, the chunks nearest the topic's centre first, up to `?max_chars=12000` (`?format=json` too) |
+  | `/brain/api/rooms/<i>` | the same bundle for one room, newest first |
+  | `/brain/api/context?q=...` | meaning search → the hit chunks as one bundle (RAG / "summarize this") |
+  | `/brain/api/report.md` | the old-school report: numbers, hour histogram, busiest days, rooms, topics table |
+
+  `curl -s 127.0.0.1:7720/brain/api/topics/2 | <your LLM CLI> "summarize"` — the server never calls a model itself.
 - **Local only**: binds 127.0.0.1 (or a tailscale 100.x address via `--host`); the brain folder holds message text.
 - Needs `uv` (numpy + umap-learn, Python 3.12). Recipe from the fleet's brains: book-library, facebook-oracle, kindle-capture.
 
