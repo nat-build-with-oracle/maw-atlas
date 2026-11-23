@@ -40,7 +40,7 @@ import urllib.request
 from collections import defaultdict
 from pathlib import Path
 
-os.environ.setdefault("LANCE_LOG", "error")   # lance warns "No existing dataset … will be created" on every new table
+os.environ.setdefault("LANCEDB_LOG", "error")   # lance warns "No existing dataset … will be created" on every new table
 DEFAULT_URL = os.environ.get("ATLAS_EMBED_URL", "http://127.0.0.1:11445")
 DEFAULT_MODEL = os.environ.get("ATLAS_EMBED_MODEL", "embeddinggemma:ane-w8a16")
 MAX_CHARS = 6000          # same cut relic5 uses before encoding
