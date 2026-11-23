@@ -16,9 +16,9 @@ function folder(name: string, id: string, gname: string, at: string, finished = 
   if (finished) writeFileSync(join(d, "server.md"), "# done\n");
   return d;
 }
-const old = folder("Phone_Booth_Cider_Bar_&_Co-1570978122772258906", "1570978122772258906", "Phone Booth Cider Bar & Co", "2026-11-23T01:00:00Z");
-const fresh = folder("phone-booth-cider-bar-and-co-1570978122772258906-20261123T030000Z", "1570978122772258906", "Phone Booth Cider Bar & Co", "2026-11-23T03:00:00Z");
-folder("Phone_booth_Co_Ltd-1550095261827858504", "1550095261827858504", "Phone booth Co Ltd", "2026-11-23T01:00:00Z");
+const old = folder("Harbor_Lights_Cider_Bar_&_Co-1100000000000000002", "1100000000000000002", "Harbor Lights Cider Bar & Co", "2026-11-23T01:00:00Z");
+const fresh = folder("harbor-lights-cider-bar-and-co-1100000000000000002-20261123T030000Z", "1100000000000000002", "Harbor Lights Cider Bar & Co", "2026-11-23T03:00:00Z");
+folder("Harbor_lights_Co_Ltd-1100000000000000001", "1100000000000000001", "Harbor lights Co Ltd", "2026-11-23T01:00:00Z");
 folder("unfinished-123456789012345678", "123456789012345678", "Half Done", "2026-11-23T01:00:00Z", false);
 
 const lines: string[] = [];
@@ -27,16 +27,16 @@ const log = (s: string) => lines.push(s);
 describe("embed targets", () => {
   test("only finished folders are listed", () => {
     expect(listGuildFolders(base).map(f => f.name).sort()).toEqual(
-      ["Phone Booth Cider Bar & Co", "Phone Booth Cider Bar & Co", "Phone booth Co Ltd"]);
+      ["Harbor Lights Cider Bar & Co", "Harbor Lights Cider Bar & Co", "Harbor lights Co Ltd"]);
   });
   test("by id → the newest folder of that guild", () => {
-    expect(resolveGuildFolders(log, ["1570978122772258906"], base)[0].dir).toBe(fresh);
+    expect(resolveGuildFolders(log, ["1100000000000000002"], base)[0].dir).toBe(fresh);
   });
   test("by name → newest folder; ambiguous → throws with the candidates", () => {
     expect(resolveGuildFolders(log, ["cider bar"], base)[0].dir).toBe(fresh);
     lines.length = 0;
-    expect(() => resolveGuildFolders(log, ["phone booth"], base)).toThrow(/ambiguous/);
-    expect(lines.join("\n")).toContain("1550095261827858504");
+    expect(() => resolveGuildFolders(log, ["harbor lights"], base)).toThrow(/ambiguous/);
+    expect(lines.join("\n")).toContain("1100000000000000001");
   });
   test("by path → that folder, even an older one", () => {
     expect(resolveGuildFolders(log, [old], base)[0].dir).toBe(old);
@@ -50,7 +50,7 @@ describe("embed targets", () => {
     expect(() => resolveGuildFolders(log, ["123456789012345678"], base)).toThrow(/no finished download/);
   });
   test("words group into one name; paths and ids stand alone", () => {
-    expect(groupTargets(["phone", "booth", "cider", "1550095261827858504", "./x", "cat", "lab"]))
-      .toEqual(["phone booth cider", "1550095261827858504", "./x", "cat lab"]);
+    expect(groupTargets(["harbor", "lights", "cider", "1100000000000000001", "./x", "cat", "lab"]))
+      .toEqual(["harbor lights cider", "1100000000000000001", "./x", "cat lab"]);
   });
 });

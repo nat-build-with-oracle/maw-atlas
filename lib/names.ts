@@ -4,8 +4,8 @@
  *
  * Guild lookup (download/ls/embed take a name where they took an id):
  *   every word of the query must appear in the guild name, compared without case,
- *   spaces or punctuation — "phone booth cider" and "phoneboothcider" both match
- *   "Phone Booth Cider Bar & Co". A query equal to a whole name always wins.
+ *   spaces or punctuation — "harbor lights cider" and "harborlightscider" both match
+ *   "Harbor Lights Cider Bar & Co". A query equal to a whole name always wins.
  *
  * File names (download --out --safe-names | --ascii):
  *   keep  (default) the real name, only `/ \ :` whitespace and control chars → "_"
@@ -30,7 +30,7 @@ export interface GuildMatch<G extends NamedGuild> {
   near: G[];
 }
 
-/** Lowercase, compatibility-folded, letters/marks/digits only: "Phone Booth Cider Bar & Co" → "phoneboothciderbarco". */
+/** Lowercase, compatibility-folded, letters/marks/digits only: "Harbor Lights Cider Bar & Co" → "harborlightsciderbarco". */
 export function normName(s: string): string {
   return String(s ?? "").normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{M}\p{N}]+/gu, "");
 }

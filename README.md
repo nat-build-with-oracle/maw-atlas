@@ -15,14 +15,14 @@ Update: `maw plugin update atlas`
 
 ```
 maw atlas ls                          # list guilds + channels
-maw atlas ls phone booth              # only guilds whose name holds every word
+maw atlas ls my server                  # only guilds whose name holds every word
 maw atlas read <channel-id> 50 --format json   # read as raw Discord JSON
 maw atlas read <channel-id> --all --since 2026-08-01 --before 2026-08-06
 maw atlas backfill [--all]           # backfill message history
 maw atlas download <guildId|channelId|threadId> [--max=N]   # explicit full download, no cursor
 maw atlas download <channelId|threadId> --out[=DIR]   # + <channel-name>-<channelId>.tar.gz: raw JSON, attachments, threads.md
 maw atlas download <guildId> --out[=DIR]   # whole server: one .tar.gz per channel + server.md + server.sqlite
-maw atlas download phone booth cider --out --extract --safe-names
+maw atlas download my server --out --extract --safe-names
 #   a guild NAME works where an id does (every word must appear; several or none → candidates listed, nothing downloaded)
 #   --extract: also unpack each blob → <guild folder>/channels/<channel>-<id>/ (messages.jsonl, attachments/, threads.md)
 #   --safe-names: names a shell takes unquoted — Thai kept; emoji, &, ｜, ∕, spaces → "-"   (--ascii: a-z 0-9 . _ - only)
@@ -95,9 +95,9 @@ embedding pass, a LanceDB table `messages` per room, per server, and optionally 
 ```
 
 ```
-maw atlas download phone booth cider --out --extract --safe-names
-maw atlas embed phone booth cider --lance=~/atlas-all     # by name, id, or folder path
-maw atlas embed phone booth cider --lance=~/atlas-all     # again: only new or edited messages are embedded
+maw atlas download my server --out --extract --safe-names
+maw atlas embed my server --lance=~/atlas-all     # by name, id, or folder path
+maw atlas embed my server --lance=~/atlas-all     # again: only new or edited messages are embedded
 maw atlas embed <folder> --room=<channelId> --full        # re-embed one room
 ```
 
