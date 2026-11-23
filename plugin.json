@@ -14,7 +14,7 @@
     "aliases": [
       "at"
     ],
-    "help": "maw atlas <ls|read|download|embed|pack|view|channel|backfill|check|wake|vesicle> — Discord fleet ops"
+    "help": "maw atlas <ls|read|download|embed|brain|pack|view|channel|backfill|check|wake|vesicle> — Discord fleet ops"
   },
   "weight": 50,
   "runtime": "bun-dev",

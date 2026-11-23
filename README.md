@@ -134,6 +134,27 @@ for h in t.search(vec("ราคาเบียร์ต่อแก้ว")).li
 | `ATLAS_EMBED_URL` | `http://127.0.0.1:11445` | `embed` (`--url=`) |
 | `ATLAS_EMBED_MODEL` | `embeddinggemma:ane-w8a16` | `embed` (`--model=`) |
 
+## A server as a 3D meaning map (`brain`)
+
+```
+maw atlas brain build my server                         # → <guild folder>/brain
+maw atlas brain build <folder A> <folder B> --out=~/atlas-brain   # several servers, one map
+maw atlas brain serve my server                         # http://127.0.0.1:7720/brain/
+```
+
+- **One point = one conversation chunk**: consecutive messages of one room or thread, cut on 3 h of silence, up to
+  1,200 characters (`--gap`, `--chars`, `--min-chars`). Single Discord messages are too short and sort by script
+  (Thai vs Latin), not meaning. Embedded text has no author names, so people do not pull the map apart.
+- **Vectors**: EmbeddingGemma on Chippy (Apple Neural Engine), document prompt `title: none | text: `, shortest first,
+  cached per chunk in `brain/cache/` (a rebuild after a new download embeds only new chunks).
+- **Map**: UMAP 3D (cosine, 15 neighbours) on the first 256 dims, 4 nearest links each (pynndescent when UMAP has
+  none). `meta.json` records `links_same_room` and `links_same_script` against random pairs: a map that splits by
+  script shows `links_same_script` near 1.0 while random is lower.
+- **Page** (three.js): colour by room / month / source (people, bots, both) / server, click a point to read the chunk
+  with earlier/later, search by meaning (query prompt, same embed server) plus plain words.
+- **Local only**: binds 127.0.0.1 (or a tailscale 100.x address via `--host`); the brain folder holds message text.
+- Needs `uv` (numpy + umap-learn, Python 3.12). Recipe from the fleet's brains: book-library, facebook-oracle, kindle-capture.
+
 ## Setup
 
 ```bash
@@ -175,7 +196,7 @@ initial 2026-07-15 build, not part of the daily-driver CLI workflow.
 ```
 git clone https://github.com/nat-build-with-oracle/maw-atlas && cd maw-atlas
 bun index.ts --help                  # run the plugin from the checkout
-bun test                             # tests/ — names, embed targets, extract + resume, LanceDB self-test (needs uv)
+bun test                             # tests/ — names, embed targets, extract + resume, LanceDB + brain self-tests (need uv)
 uv run --with lancedb --with pyarrow python -I scripts/atlas-lance.py self-test   # the LanceDB writer alone
 ```
 
