@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Discord brain · 3D</title>
+<!-- maw atlas brain: Discord servers in 3D. One point per conversation chunk (one room or thread, cut on 3 h of
+     silence), placed by meaning (EmbeddingGemma via Chippy -> UMAP 3D, scripts/atlas-brain.py), coloured by room /
+     month / source / server, lines to the 4 nearest in meaning. Local only: lib/brain-server.ts on 127.0.0.1.
+     Ported from laris-co/facebook-oracle brain/index.html (itself from laris-co/book-library's brain). -->
+<style>
+:root{--bg:#07080c;--fg:#e8e6df;--dim:#8a8a93;--panel:rgba(16,18,26,.88);--line:rgba(255,255,255,.08);--accent:#7cc4ff}
+*{box-sizing:border-box}html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font:14px/1.5 -apple-system,system-ui,"Noto Sans Thai",sans-serif;overflow:hidden}
+canvas{display:block}
+/* seamless scrollbars: thin, dark, no white track */
+*{scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.14) transparent}
+::-webkit-scrollbar{width:6px;height:6px}::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:6px}::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.28)}
+::-webkit-scrollbar-corner{background:transparent}
+.bar{position:fixed;top:14px;left:14px;right:14px;display:flex;gap:10px;align-items:center;pointer-events:none}
+.bar>*{pointer-events:auto}
+.brand{font-weight:650;letter-spacing:.02em;display:flex;gap:8px;align-items:center}
+.brand small{color:var(--dim);font-weight:400}
+.search{display:flex;align-items:center;gap:6px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:6px 10px;margin-left:auto;backdrop-filter:blur(8px)}
+.search input{background:none;border:0;outline:0;color:var(--fg);width:260px;font:inherit}
+.btn{background:var(--panel);border:1px solid var(--line);color:var(--fg);border-radius:10px;padding:7px 9px;cursor:pointer;display:flex;align-items:center;gap:6px;backdrop-filter:blur(8px);font:inherit}
+.btn:hover{border-color:rgba(255,255,255,.25)}
+svg.i{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.legend{position:fixed;left:14px;bottom:14px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 12px;max-height:52vh;overflow:auto;backdrop-filter:blur(8px);width:270px}
+.legend h4{margin:0 0 6px;font-size:12px;color:var(--dim);font-weight:500;text-transform:uppercase;letter-spacing:.08em;display:flex;gap:6px;align-items:center}
+.legend .modes{display:flex;gap:4px;margin-bottom:8px}
+.legend .modes button{flex:1;background:none;border:1px solid var(--line);color:var(--dim);border-radius:7px;padding:3px 0;cursor:pointer;font:12px inherit}
+.legend .modes button.on{color:var(--fg);border-color:rgba(255,255,255,.3)}
+.fam{display:flex;align-items:center;gap:8px;cursor:pointer;padding:2px 0;font-size:13px;user-select:none}
+.fam.off{opacity:.3}.fam i{width:10px;height:10px;border-radius:50%;display:inline-block;flex:none}
+.fam .t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fam span.n{margin-left:auto;color:var(--dim);font-variant-numeric:tabular-nums}
+.panel{position:fixed;right:14px;top:64px;bottom:14px;width:min(440px,42vw);background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;overflow:auto;backdrop-filter:blur(10px);transform:translateX(calc(100% + 20px));transition:transform .25s ease}
+.panel.open{transform:none}
+.panel h3{margin:0 0 4px;font-size:16px}.panel .meta{color:var(--dim);font-size:12px;margin-bottom:10px}
+.panel .nav{display:flex;gap:6px;margin-bottom:10px}
+.msg{font-size:13.5px;line-height:1.6;margin:0 0 6px;white-space:pre-wrap;word-break:break-word}
+.msg b{font-weight:600;color:#c9c6bc}.msg.own b{color:var(--accent)}.msg time{color:var(--dim);font-size:11px;margin-right:6px;font-variant-numeric:tabular-nums}
+.hits{margin-top:14px;border-top:1px solid var(--line);padding-top:10px}
+.hits a{display:block;color:var(--fg);text-decoration:none;font-size:12.5px;padding:4px 0;cursor:pointer;border-bottom:1px solid rgba(255,255,255,.04)}
+.hits a:hover{color:var(--accent)}.hits a small{color:var(--dim);display:block}
+.tip{position:fixed;pointer-events:none;background:rgba(0,0,0,.82);border:1px solid var(--line);padding:4px 8px;border-radius:6px;font-size:12px;display:none;max-width:340px}
+.status{position:fixed;right:14px;bottom:14px;color:var(--dim);font-size:12px;font-variant-numeric:tabular-nums;pointer-events:none}
+.panel.open~.status{right:calc(min(440px,42vw) + 28px)}
+</style>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"}}</script>
+</head>
+<body>
+<div class="bar">
+  <div class="brand"><svg class="i" viewBox="0 0 24 24"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M12 5v13"/></svg>Discord brain <small id="count"></small></div>
+  <label class="search"><svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><input id="q" placeholder="ค้นความหมาย… แล้วกด Enter"></label>
+  <button class="btn" id="links" title="เส้นเชื่อม: เปิด / ปิด"><svg class="i" viewBox="0 0 24 24"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.59 13.51 6.83 3.98M15.41 6.51l-6.82 3.98"/></svg><span id="linksLabel">links: on</span></button>
+  <button class="btn" id="spin" title="หมุนอัตโนมัติ"><svg class="i" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg></button>
+  <button class="btn" id="reset" title="ล้างการเลือก"><svg class="i" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg></button>
+</div>
+<div class="legend"><div class="modes"><button data-m="topic" id="topicBtn">topic</button><button data-m="room" class="on">room</button><button data-m="month">month</button><button data-m="source">source</button><button data-m="server" id="srvBtn">server</button></div><h4 id="legendTitle">Rooms</h4><div id="fams"></div></div>
+<aside class="panel" id="panel"></aside>
+<div class="tip" id="tip"></div>
+<div class="status" id="status">loading…</div>
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const bin = (f, T) => fetch(`/brain/data/${f}`).then((r) => (r.ok ? r.arrayBuffer() : new ArrayBuffer(0))).then((b) => new T(b));
+const [meta, xyz, grp, src, mon, gld, knn] = await Promise.all([
+  fetch("/brain/data/meta.json").then((r) => r.json()),
+  bin("xyz.f32", Float32Array), bin("grp.u32", Uint32Array), bin("src.u8", Uint8Array), bin("mon.u16", Uint16Array), bin("gld.u8", Uint8Array), bin("knn.u32", Uint32Array),
+]);
+const servers = meta.servers || [];
+const insight = await fetch("/brain/data/insight.json").then((r) => (r.ok ? r.json() : null));
+const topic = await bin("topic.u16", Uint16Array);
+if (!insight || topic.length !== meta.n) document.getElementById("topicBtn").remove();
+if (servers.length < 2) document.getElementById("srvBtn").remove();
+const monLabel = (m) => `${2000 + Math.floor(m / 12)}-${String((m % 12) + 1).padStart(2, "0")}`;
+const roomTitle = (gi) => (servers.length > 1 ? `${servers[groups[gi].server]?.name} › ` : "") + groups[gi].title;
+const N = meta.n, groups = meta.groups, K = meta.k || 0;
+// robust scale: a few far outliers set the build's +-100 box, so rescale so that 98% of points sit inside radius 100
+{ const r = new Float32Array(N); for (let i = 0; i < N; i++) r[i] = Math.hypot(xyz[i * 3], xyz[i * 3 + 1], xyz[i * 3 + 2]);
+  const p98 = Float32Array.from(r).sort()[Math.floor(N * 0.98)] || 100; const f = 100 / p98; window.__scale = f; for (let i = 0; i < N * 3; i++) xyz[i] *= f; }
+$("count").textContent = `${N.toLocaleString()} chunks · ${meta.counts.messages.toLocaleString()} messages · ${meta.counts.rooms} rooms${servers.length > 1 ? ` · ${servers.length} servers` : ""}`;
+const day = (ms) => new Date(ms).toLocaleDateString("en-CA", { timeZone: "Asia/Bangkok" });
+const hm = (ms) => new Date(ms).toLocaleTimeString("en-GB", { timeZone: "Asia/Bangkok", hour: "2-digit", minute: "2-digit" });
+
+// ---- colour modes: room (largest 18, the rest one quiet colour), month, source (people / bots / both), server
+const SRC = [["people", 0x5fb3ff], ["bots", 0xff6b9a], ["people + bots", 0xffb454]];
+const OTHER = new THREE.Color(0x4a5470);
+const hue = (k, n) => new THREE.Color().setHSL(0.66 - 0.66 * (k / Math.max(1, n - 1)), 0.7, 0.6);
+function buildMode(mode) {
+  if (mode === "source") {
+    const n = [0, 0, 0]; for (let i = 0; i < N; i++) n[src[i]]++;
+    return { title: "Who wrote it", keyOf: (i) => src[i], entries: SRC.map(([l, c], k) => ({ key: k, label: l, n: n[k], color: new THREE.Color(c) })).filter((e) => e.n) };
+  }
+  if (mode === "topic") {
+    const T = insight.topics;
+    const rest = topic.reduce((s, t) => s + (t === 65535 ? 1 : 0), 0);
+    const entries = T.map((t, k) => ({ key: t.id, label: `${t.id} · ${t.keywords.slice(0, 4).join(", ")}`, n: t.chunks, color: new THREE.Color().setHSL((k * 0.618 + 0.08) % 1, 0.7, 0.6) }));
+    if (rest) entries.push({ key: 65535, label: "no topic", n: rest, color: OTHER });
+    return { title: `Topics (${T.length}) · c-TF-IDF keywords`, keyOf: (i) => topic[i], entries };
+  }
+  if (mode === "server") {
+    const n = servers.map(() => 0); for (let i = 0; i < N; i++) n[gld[i]]++;
+    return { title: "Server", keyOf: (i) => gld[i], entries: servers.map((sv, k) => ({ key: k, label: sv.name, n: n[k], color: new THREE.Color().setHSL((k * 0.618 + 0.08) % 1, 0.7, 0.6) })) };
+  }
+  if (mode === "month") {
+    const n = new Map(); for (let i = 0; i < N; i++) n.set(mon[i], (n.get(mon[i]) || 0) + 1);
+    const ms = [...n.keys()].sort((a, b) => a - b);
+    return { title: "Month", keyOf: (i) => mon[i], entries: ms.map((m, k) => ({ key: m, label: monLabel(m), n: n.get(m), color: hue(k, ms.length) })).reverse() };
+  }
+  const order = groups.map((g, i) => i).sort((a, b) => groups[b].points - groups[a].points);
+  const top = new Set(order.slice(0, 18));
+  const entries = []; let h = 0;
+  for (const i of order) if (top.has(i)) entries.push({ key: i, label: roomTitle(i), n: groups[i].points, color: new THREE.Color().setHSL((h++ * 0.618 + 0.08) % 1, 0.65, 0.62) });
+  const rest = N - entries.reduce((s, e) => s + e.n, 0);
+  if (rest) entries.push({ key: -1, label: `other rooms (${(groups.length - entries.length).toLocaleString()})`, n: rest, color: OTHER });
+  return { title: groups.length > 18 ? "Rooms (largest 18)" : "Rooms", keyOf: (i) => (top.has(grp[i]) ? grp[i] : -1), entries };
+}
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+document.body.prepend(renderer.domElement);
+const scene = new THREE.Scene();
+scene.fog = new THREE.FogExp2(0x07080c, 0.0032);
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 2000);
+camera.position.set(0, 25, 150);   // close enough that the main cloud fills the view
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true; controls.autoRotate = true; controls.autoRotateSpeed = 0.35;
+
+const sprite = (() => { const c = document.createElement("canvas"); c.width = c.height = 64; const g = c.getContext("2d");
+  const r = g.createRadialGradient(32, 32, 0, 32, 32, 32); r.addColorStop(0, "rgba(255,255,255,1)"); r.addColorStop(0.35, "rgba(255,255,255,.55)"); r.addColorStop(1, "rgba(255,255,255,0)");
+  g.fillStyle = r; g.fillRect(0, 0, 64, 64); return new THREE.CanvasTexture(c); })();
+const geo = new THREE.BufferGeometry();
+geo.setAttribute("position", new THREE.BufferAttribute(xyz, 3));
+const base = new Float32Array(N * 3), col = new Float32Array(N * 3);
+geo.setAttribute("color", new THREE.BufferAttribute(col, 3));
+const pts = new THREE.Points(geo, new THREE.PointsMaterial({ size: N > 20000 ? 0.75 : N > 5000 ? 1.2 : 1.8, map: sprite, vertexColors: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true }));
+scene.add(pts);
+
+// connected lines: each point to its K nearest in meaning; segments index the points' own buffers, so dimming a
+// point dims its links. Links longer than MAXLEN map units are hidden (near in meaning, far on the map: noise).
+const MAXLEN = 9, pairs = [];
+let longDropped = 0;
+if (K) {
+  const seen = new Set();
+  for (let i = 0; i < N; i++) for (let t = 0; t < K; t++) {
+    const j = knn[i * K + t]; if (j >= N || j === i) continue;
+    const a = Math.min(i, j), b = Math.max(i, j), key = a * N + b;
+    if (seen.has(key)) continue; seen.add(key);
+    const dx = xyz[a * 3] - xyz[b * 3], dy = xyz[a * 3 + 1] - xyz[b * 3 + 1], dz = xyz[a * 3 + 2] - xyz[b * 3 + 2];
+    if (dx * dx + dy * dy + dz * dz > MAXLEN * MAXLEN) { longDropped++; continue; }
+    pairs.push(a, b);
+  }
+}
+const linkGeo = new THREE.BufferGeometry();
+linkGeo.setAttribute("position", geo.attributes.position);
+linkGeo.setAttribute("color", geo.attributes.color);
+linkGeo.setIndex(pairs);
+const links = new THREE.LineSegments(linkGeo, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.035, depthWrite: false, blending: THREE.AdditiveBlending }));
+scene.add(links);
+$("links").onclick = () => { links.visible = !links.visible; $("linksLabel").textContent = links.visible ? "links: on" : "links: off"; };
+
+// ---- state: colour mode, legend toggles, focus (a Set of point ids lit, the rest dimmed)
+const DIM = N > 20000 ? 0.42 : 0.7;   // many additive points: keep each one faint so dense regions glow instead of turning white
+let mode, keyOf, on = new Map(), focus = null, focusStrong = null;
+function setMode(m) {
+  const b = buildMode(m); keyOf = b.keyOf; mode = m;
+  const cmap = new Map(b.entries.map((e) => [e.key, e.color])); on = new Map(b.entries.map((e) => [e.key, true]));
+  for (let i = 0; i < N; i++) { const c = cmap.get(keyOf(i)) || OTHER; base[i * 3] = c.r * DIM; base[i * 3 + 1] = c.g * DIM; base[i * 3 + 2] = c.b * DIM; }
+  $("legendTitle").textContent = b.title;
+  $("fams").innerHTML = b.entries.map((e) => `<div class="fam" data-k="${e.key}"><i style="background:#${e.color.getHexString()}"></i><span class="t">${esc(e.label)}</span><span class="n">${e.n.toLocaleString()}</span></div>`).join("");
+  document.querySelectorAll(".modes button").forEach((x) => x.classList.toggle("on", x.dataset.m === m));
+  paint();
+}
+function visible(i) { return on.get(keyOf(i)) !== false; }
+function paint() {
+  for (let i = 0; i < N; i++) {
+    const k = !visible(i) ? 0.03 : focus ? (focusStrong?.has(i) ? 2.4 : focus.has(i) ? 1.6 : 0.025) : 1;
+    col[i * 3] = base[i * 3] * k; col[i * 3 + 1] = base[i * 3 + 1] * k; col[i * 3 + 2] = base[i * 3 + 2] * k;
+  }
+  geo.attributes.color.needsUpdate = true;
+  links.material.opacity = focus ? 0.35 : 0.035;
+}
+$("fams").onclick = (e) => { const el = e.target.closest(".fam"); if (!el) return; const k = +el.dataset.k; on.set(k, !on.get(k)); el.classList.toggle("off"); paint(); };
+document.querySelector(".modes").onclick = (e) => { const b = e.target.closest("button"); if (b) setMode(b.dataset.m); };
+function flyTo(i) { const t = new THREE.Vector3(xyz[i * 3], xyz[i * 3 + 1], xyz[i * 3 + 2]); controls.target.copy(t); camera.position.copy(t.clone().add(new THREE.Vector3(0, 10, 45))); controls.autoRotate = false; }
+
+// ---- text: shards of meta.shard points, fetched on demand
+const shards = new Map();
+async function point(i) {
+  const s = Math.floor(i / meta.shard);
+  if (!shards.has(s)) shards.set(s, fetch(`/brain/data/p/${s}.json`).then((r) => r.json()));
+  return (await shards.get(s))[i % meta.shard];   // [start_ms, end_ms, thread_or_null, [[ms, who, text, bot], ...]]
+}
+let lastHits = "";
+async function openPoint(i, keepFocus) {
+  const g = groups[grp[i]];
+  if (!keepFocus) { focus = new Set(); for (let j = 0; j < N; j++) if (grp[j] === grp[i]) focus.add(j); focusStrong = new Set([i]); paint(); }
+  flyTo(i);
+  const p = $("panel"); p.classList.add("open");
+  const [start, end, thread, lines] = await point(i);
+  const prev = i > 0 && grp[i - 1] === grp[i] ? i - 1 : -1, next = i + 1 < N && grp[i + 1] === grp[i] ? i + 1 : -1;
+  p.innerHTML = `<h3>${esc(roomTitle(grp[i]))}${thread ? ` <small>› 🧵 ${esc(thread)}</small>` : ""}</h3><div class="meta">${day(start)}${day(end) !== day(start) ? " → " + day(end) : ""} · ${lines.length} message${lines.length > 1 ? "s" : ""} · #${i} · ${g.points.toLocaleString()} chunks in this room</div>
+    <div class="nav"><button class="btn" data-go="${prev}" ${prev < 0 ? "disabled" : ""}>‹ earlier</button><button class="btn" data-go="${next}" ${next < 0 ? "disabled" : ""}>later ›</button></div>
+    ${lines.map(([ms, who, text, bot]) => `<p class="msg${who === meta.owner ? " own" : ""}"><time>${hm(ms)}</time><b>${esc(who)}${bot ? " 🤖" : ""}</b> ${esc(text)}</p>`).join("")}
+    ${lastHits}`;
+}
+$("panel").onclick = (e) => {
+  const b = e.target.closest("[data-go]");
+  if (b && +b.dataset.go >= 0) { const j = +b.dataset.go; if (focus) { focusStrong = new Set([j]); paint(); } return openPoint(j, !!focus); }
+  const a = e.target.closest("a[data-i]"); if (a) openPoint(+a.dataset.i, true);
+};
+
+// ---- search: meaning hits (Chippy) bright, plain substring matches lit too; camera flies to the best
+$("q").onkeydown = async (e) => {
+  const q = e.target.value.trim(); if (e.key !== "Enter" || !q) return;
+  $("status").textContent = "searching…";
+  const r = await fetch("/brain/search", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ query: q, k: 60 }) });
+  const out = await r.json();
+  const hits = out.hits || [], kw = out.keyword || [];
+  focus = new Set([...hits.map((h) => h.i), ...kw]); focusStrong = new Set(hits.slice(0, 15).map((h) => h.i)); paint();
+  const top = hits.slice(0, 12);
+  const rows = await Promise.all(top.map(async (h) => { const [s, , , ls] = await point(h.i); return { h, s, snip: ls.map((l) => l[2]).join(" ").slice(0, 110) }; }));
+  lastHits = `<div class="hits"><div class="meta">"${esc(q)}" · ${hits.length} by meaning · ${kw.length}${kw.length >= 500 ? "+" : ""} containing the words</div>${rows.map(({ h, s, snip }) =>
+    `<a data-i="${h.i}">${esc(snip)}<small>${esc(roomTitle(grp[h.i]))} · ${day(s)} · cos ${h.score}</small></a>`).join("")}</div>`;
+  const first = hits[0]?.i ?? kw[0];
+  if (first !== undefined) openPoint(first, true);
+  $("status").textContent = `${hits.length} meaning hits + ${kw.length} keyword · vector: ${out.vector_from} · ${out.ms} ms`;
+};
+$("reset").onclick = () => { focus = focusStrong = null; lastHits = ""; paint(); $("panel").classList.remove("open"); controls.target.set(0, 0, 0); };
+$("spin").onclick = () => { controls.autoRotate = !controls.autoRotate; };
+
+// ---- hover + click
+const ray = new THREE.Raycaster(); ray.params.Points.threshold = N > 20000 ? 0.7 : 1.2;
+const mouse = new THREE.Vector2(); let hover = -1, down = null;
+addEventListener("pointermove", (e) => {
+  if (e.target !== renderer.domElement) { $("tip").style.display = "none"; hover = -1; return; }
+  mouse.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+  ray.setFromCamera(mouse, camera);
+  const hit = ray.intersectObject(pts).find((h) => visible(h.index));
+  hover = hit ? hit.index : -1;
+  const t = $("tip");
+  if (hover >= 0) { t.style.display = "block"; t.style.left = e.clientX + 12 + "px"; t.style.top = e.clientY + 12 + "px"; t.textContent = `${roomTitle(grp[hover])} · ${monLabel(mon[hover])}${insight && topic[hover] !== 65535 ? ` · topic ${topic[hover]}: ${insight.topics[topic[hover]].label}` : ""}`; }
+  else t.style.display = "none";
+});
+renderer.domElement.addEventListener("pointerdown", (e) => { down = [e.clientX, e.clientY]; });
+renderer.domElement.addEventListener("pointerup", (e) => { if (down && Math.hypot(e.clientX - down[0], e.clientY - down[1]) < 4 && hover >= 0) { lastHits = ""; openPoint(hover); } down = null; });
+addEventListener("resize", () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+
+setMode(insight && topic.length === N ? "topic" : "room");
+$("status").textContent = `built ${meta.built.slice(0, 16)} · ${(pairs.length / 2).toLocaleString()} links shown (${longDropped.toLocaleString()} long hidden)`;
+window.__brain = { N, links: pairs.length / 2, longDropped, rooms: groups.length, servers: servers.length };
+renderer.setAnimationLoop(() => { controls.update(); renderer.render(scene, camera); });
+</script>
+</body>
+</html>
