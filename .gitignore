@@ -6,3 +6,5 @@ node_modules/
 *.sqlite-shm
 *.sqlite-wal
 .DS_Store
+.tmp/
+/atlas-view
