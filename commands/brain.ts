@@ -3,6 +3,7 @@
  *
  *   brain build <guild folder|guildId|guild name>... [--out=DIR] [--gap=3] [--chars=1200] [--url=URL] [--model=M]
  *   brain serve <brain dir|guild folder|guild name> [--port=7720] [--host=127.0.0.1]
+ *   brain ontology <brain dir|guild> [--out=DIR]   Apache Ossie YAML: ontology, semantic model, mapping (schema only)
  *
  * build reads `download <guild> --out` folders (server.sqlite; no Discord calls) and writes the brain folder:
  * <guild folder>/brain for one server, --out=DIR for several together. One point = one conversation chunk (a room or
@@ -15,11 +16,12 @@
  *
  * The recipe is the fleet's brain: laris-co/book-library (2026-11-19), facebook-oracle's fb brain, kindle-capture.
  */
-import { existsSync, statSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "fs";
 import { join, resolve } from "path";
 import { blobDir } from "../lib/channel-archive";
 import { resolveGuildFolders } from "../lib/embed-targets";
 import { startBrain } from "../lib/brain-server";
+import { brainOntology } from "../lib/brain-ontology";
 import { groupTargets } from "./embed";
 import type { CommandMeta, Log } from "../lib/command-types";
 
@@ -32,6 +34,7 @@ export const meta: CommandMeta = {
     "--url=URL --model=M   embed server (default Chippy http://127.0.0.1:11445 embeddinggemma:ane-w8a16)",
     "brain insight <brain dir|guild>   topics (HDBSCAN + c-TF-IDF, Thai via PyThaiNLP) + activity stats → insight.json (build runs it too)",
     "brain serve <brain dir|guild folder|guild name> [--port=7720] [--host=127.0.0.1]   the three.js page + /brain/api (overview, topics, LLM bundles, report.md)",
+    "brain ontology <brain dir|guild> [--out=DIR]   Apache Ossie ontology + semantic model + mapping (schema only) → <brain>/ontology/",
   ],
   tokenRequirement: "none",
 };
@@ -45,7 +48,9 @@ function usage(log: Log) {
   log("         one server → <guild folder>/brain; several → --out=DIR (required). needs uv (numpy, umap-learn)");
   log("       maw atlas brain insight <brain dir|guild>   topics + stats → insight.json (build runs it too)");
   log("  serve: three.js page, colour by topic / room / month / source / server, click to read, search by meaning + words");
-  log("         /brain/api: overview, topics, topics/:id + rooms/:i + context?q= (LLM-ready markdown), report.md");
+  log("         /brain/api: overview, topics, topics/:id + rooms/:i + context?q= (LLM-ready markdown), report.md, ontology");
+  log("       maw atlas brain ontology <brain dir|guild> [--out=DIR]   Apache Ossie YAML (ontology, semantic model, mapping)");
+  log("  layout: the page has Combined (one meaning space) and Separate (one island per room); insight writes sep.f32");
 }
 
 async function pump(stream: ReadableStream<Uint8Array>, log: Log) {
@@ -109,6 +114,25 @@ async function insightCmd(log: Log, args: string[]) {
   log("served pages pick it up after: curl -X POST <page>/brain/reload (or restart serve)");
 }
 
+function brainDir(log: Log, args: string[]): string {
+  const t = args.slice(2).filter(a => !a.startsWith("--")).join(" ");
+  if (existsSync(t) && statSync(t).isDirectory()) return existsSync(join(t, "meta.json")) ? t : join(t, "brain");
+  return join(resolveGuildFolders(log, groupTargets(t.split(" ")), flag(args, "from") || blobDir())[0].dir, "brain");
+}
+
+function ontologyCmd(log: Log, args: string[]) {
+  if (!args.slice(2).some(a => !a.startsWith("--"))) return usage(log);
+  const dir = brainDir(log, args);
+  if (!existsSync(join(dir, "meta.json"))) throw new Error(`${dir}: no meta.json — run 'maw atlas brain build' first`);
+  const meta = JSON.parse(readFileSync(join(dir, "meta.json"), "utf8"));
+  const insight = existsSync(join(dir, "insight.json")) ? JSON.parse(readFileSync(join(dir, "insight.json"), "utf8")) : null;
+  const out = flag(args, "out") || join(dir, "ontology");
+  mkdirSync(out, { recursive: true });
+  for (const [name, body] of Object.entries(brainOntology(meta, insight))) { writeFileSync(join(out, name), body); log(`wrote ${join(out, name)}`); }
+  log("Apache Ossie 0.3.0.dev0 — check: uv run <apache/ossie>/validation/validate.py --schema <ossie>/ontology/ontology.json discord.ontology.yaml");
+  log("served too: /brain/api/ontology");
+}
+
 async function serve(log: Log, args: string[]) {
   const words = args.slice(2).filter(a => !a.startsWith("--"));
   if (!words.length) return usage(log);
@@ -130,6 +154,7 @@ export async function run(log: Log, _token: string, args: string[]) {
   if (sub === "build") return build(log, args);
   if (sub === "serve") return serve(log, args);
   if (sub === "insight") return insightCmd(log, args);
+  if (sub === "ontology") return ontologyCmd(log, args);
   usage(log);
   if (sub) throw new Error(`unknown: brain ${sub}`);
 }

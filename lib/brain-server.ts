@@ -7,6 +7,7 @@
  *                           first 256 dims renormalised), cosine over vec.i8, plus plain substring matches
  *   POST /brain/reload      re-read the folder after a rebuild, no restart
  *   GET  /brain/api/...     overview, topics, LLM-ready bundles (topic / room / search), report.md — lib/brain-api.ts
+ *   GET  /brain/api/ontology[/<file>]   the Apache Ossie ontology + semantic model + mapping (lib/brain-ontology.ts)
  *
  * The data is private message text: the bind is 127.0.0.1 unless --host names a tailscale 100.x address
  * (lib/viewer.ts allowedHost — the same rule as `maw atlas view`). Ported from laris-co/facebook-oracle brain/server.ts.
@@ -15,6 +16,7 @@ import { existsSync } from "fs";
 import { join, normalize } from "path";
 import { allowedHost } from "./viewer";
 import { brainApi, type BrainData } from "./brain-api";
+import { brainOntology, ONTOLOGY_FILES } from "./brain-ontology";
 
 const PAGE = join(import.meta.dir, "brain.html");
 
@@ -104,6 +106,14 @@ export async function startBrain(dir: string, opts: { host?: string; port?: numb
     if (path === "/" || path === "/brain") return Response.redirect("/brain/", 302);
     if (path === "/brain/" || path === "/brain/index.html") return file(PAGE);
     if (path.startsWith("/brain/data/")) return file(inside(dir, path.slice("/brain/data/".length)));
+    if (path === "/brain/api/ontology" || path.startsWith("/brain/api/ontology/")) {
+      const docs = brainOntology(meta, insight);
+      const name = path.slice("/brain/api/ontology/".length);
+      if (!name) return Response.json({ spec: "Apache Ossie 0.3.0.dev0", files: ONTOLOGY_FILES.map((f) => `/brain/api/ontology/${f}`),
+        validate: "uv run apache/ossie/validation/validate.py --schema ontology/ontology.json discord.ontology.yaml (mapping: --schema ontology/mapping.json)" });
+      const body = (docs as Record<string, string>)[name];
+      return body ? new Response(body, { headers: { "content-type": "application/yaml; charset=utf-8", "cache-control": "no-store" } }) : new Response("not found", { status: 404 });
+    }
     if (path.startsWith("/brain/api")) {
       const data: BrainData = { meta, insight, points, grp, topic, search: async (q, k) => {
         const v = await embedQuery(q);
