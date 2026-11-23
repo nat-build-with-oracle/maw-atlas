@@ -25,6 +25,7 @@ import { getGuildChannels } from "./discord";
 import { buildServerDb } from "./server-db";
 import { listActiveThreads, listArchivedThreads } from "./discord-threads";
 import { walkTarget } from "./download-target";
+import { clip, fileName, type NameMode } from "./names";
 import type { MessageStore } from "./discord-db";
 import type { Log } from "./command-types";
 
@@ -42,33 +43,31 @@ function isForbidden(e: unknown): boolean {
   return /\s403\s/.test(e instanceof Error ? e.message : String(e));
 }
 
-/**
- * Clip to a byte budget, keeping a short extension. Filesystems cap one path
- * component at 255 bytes, and Discord attachment names and Thai channel names
- * (3 bytes a character) can exceed it. The original name stays in manifest.json.
- */
-function clip(name: string, maxBytes: number): string {
-  const enc = new TextEncoder();
-  if (enc.encode(name).length <= maxBytes) return name;
-  const dot = name.lastIndexOf(".");
-  const ext = dot > 0 && name.length - dot <= 10 ? name.slice(dot) : "";
-  let budget = maxBytes - enc.encode(ext).length;
-  let base = "";
-  for (const ch of Array.from(name.slice(0, name.length - ext.length))) {
-    budget -= enc.encode(ch).length;
-    if (budget < 0) break;
-    base += ch;
-  }
-  return base + ext;
-}
-
-/** Keep the real name (emoji, Thai, …) — only strip what a filename can't hold, and clip it. */
-function safeName(name: unknown, fallback: string): string {
-  return clip(String(name ?? fallback).replace(/[\/\\:\s\x00-\x1f]+/g, "_") || fallback, 150);
+/** Blob/folder name for a channel or guild: by default the real name (emoji, Thai, …) with only
+ *  what a filename can't hold stripped; --safe-names / --ascii modes in lib/names.ts fileName(). */
+function safeName(name: unknown, fallback: string, mode: NameMode = "keep"): string {
+  return fileName(name, fallback, mode);
 }
 
 function stamp(): string {
   return new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
+}
+
+/** Folders inside a guild archive that are built from the blobs, not blobs themselves. */
+export const DERIVED_DIRS = new Set(["channels", "lance"]);
+
+/**
+ * Unpack one blob into `into`/<blob name>/ — messages.jsonl, threads.md, manifest.json,
+ * attachments/. Files already there are overwritten; anything else in the folder
+ * (a lance/ table written by `maw atlas embed`) is left alone.
+ */
+export function extractBlob(tarball: string, into: string): string {
+  mkdirSync(into, { recursive: true });
+  const x = Bun.spawnSync(["tar", "-xzf", tarball, "-C", into]);
+  if (x.exitCode !== 0) throw new Error(`cannot extract ${tarball}: ${x.stderr.toString().trim()}`);
+  const dir = join(into, basename(tarball, ".tar.gz"));
+  if (!existsSync(join(dir, "manifest.json"))) throw new Error(`extracted ${tarball} but ${dir}/manifest.json is missing`);
+  return dir;
 }
 
 /**
@@ -77,6 +76,14 @@ function stamp(): string {
  */
 export function blobDir(): string {
   return process.env.ATLAS_BLOB_DIR || join(homedir(), ".maw", "atlas-blobs");
+}
+
+/** Options for blob writing (download --out). */
+export interface BlobOpts {
+  /** file/dir names: keep (default) | safe | ascii — see lib/names.ts */
+  names?: NameMode;
+  /** also unpack each blob into a plain folder (download --extract) */
+  extract?: boolean;
 }
 
 export interface BlobResult {
@@ -132,7 +139,7 @@ async function threadsUnder(token: string, ch: any): Promise<{ threads: any[]; p
 }
 
 export async function archiveChannel(
-  token: string, store: MessageStore, ch: any, outDir?: string,
+  token: string, store: MessageStore, ch: any, outDir?: string, blobOpts: BlobOpts = {},
 ): Promise<ArchiveResult> {
   const isThread = !!ch.thread_metadata;
   if (isThread && !ch.parent_id) throw new Error(`thread ${ch.id} has no parent_id — refusing to guess`);
@@ -147,7 +154,7 @@ export async function archiveChannel(
         ...threads.map(t => ({ fetchId: t.id, dbChannelId: ch.id, dbThreadId: t.id })),
       ];
 
-  const blob = outDir ? new ChannelBlob(outDir, ch, threads, privateThreads) : null;
+  const blob = outDir ? new ChannelBlob(outDir, ch, threads, privateThreads, blobOpts.names) : null;
   const opts = { max: Number.POSITIVE_INFINITY, verbose: false, onMessage: blob ? (m: any) => blob.add(m) : undefined };
   const result: ArchiveResult = { threads: threads.length, privateThreads, fetched: 0, inserted: 0 };
   try {
@@ -176,8 +183,9 @@ class ChannelBlob {
   constructor(
     private readonly outDir: string, private readonly channel: any,
     private readonly threads: any[], private readonly privateThreads: PrivateThreads,
+    names: NameMode = "keep",
   ) {
-    let name = `${safeName(channel.name, "channel")}-${channel.id}`;
+    let name = `${safeName(channel.name, "channel", names)}-${channel.id}`;
     if (existsSync(join(outDir, `${name}.tar.gz`)) || existsSync(join(outDir, name))) name += `-${stamp()}`;
     this.name = name;
     this.dir = join(outDir, this.name);
@@ -285,6 +293,8 @@ export interface GuildArchiveResult {
   threads: number;
   bytes: number;
   sqlite?: string;
+  /** channels/ folder when download --extract unpacked the blobs */
+  extracted?: string;
 }
 
 /**
@@ -304,7 +314,7 @@ export interface GuildArchiveResult {
  * is never touched — a new run gets a UTC-stamped folder instead.
  */
 export async function archiveGuild(
-  log: Log, token: string, store: MessageStore, guild: any, outDir: string,
+  log: Log, token: string, store: MessageStore, guild: any, outDir: string, blobOpts: BlobOpts = {},
 ): Promise<GuildArchiveResult> {
   const channels: any[] = await getGuildChannels(token, guild.id);
   const byId = new Map(channels.map(c => [c.id, c]));
@@ -317,7 +327,7 @@ export async function archiveGuild(
     .sort((a, b) => catPos(a) - catPos(b) || String(a.parent_id ?? "").localeCompare(String(b.parent_id ?? ""))
       || isVoice(a) - isVoice(b) || a.position - b.position);
 
-  let dir = join(outDir, `${safeName(guild.name, "guild")}-${guild.id}`);
+  let dir = join(outDir, `${safeName(guild.name, "guild", blobOpts.names)}-${guild.id}`);
   const resuming = existsSync(dir) && !existsSync(join(dir, "server.md"));
   if (existsSync(dir) && !resuming) dir += `-${stamp()}`;
   mkdirSync(dir, { recursive: true });
@@ -325,7 +335,9 @@ export async function archiveGuild(
     log(`  resuming unfinished run in ${dir}`);
     // A sub-folder is a channel blob's staging dir from a run that was killed
     // mid-channel (a finished blob is only ever a .tar.gz) — drop it and redo that channel.
+    // channels/ (download --extract) and lance/ (maw atlas embed) are derived, never staging.
     for (const f of readdirSync(dir)) {
+      if (DERIVED_DIRS.has(f)) continue;
       if (statSync(join(dir, f)).isDirectory()) {
         rmSync(join(dir, f), { recursive: true, force: true });
         log(`  removed unfinished staging dir ${f}/`);
@@ -336,14 +348,14 @@ export async function archiveGuild(
   const rows: { ch: any; r?: ArchiveResult; error?: string }[] = [];
   for (const [i, ch] of targets.entries()) {
     const tag = `[${i + 1}/${targets.length}] #${ch.name}`;
-    const kept = resuming ? keptBlob(dir, ch) : null;
+    const kept = resuming ? keptBlob(dir, ch, blobOpts.names) : null;
     if (kept) {
       rows.push({ ch, r: kept });
       log(`  ↺ ${tag}: kept from the earlier run — ${kept.blob!.messages} msg, ${kept.blob!.attachments} att`);
       continue;
     }
     try {
-      const r = await archiveChannel(token, store, ch, dir);
+      const r = await archiveChannel(token, store, ch, dir, { names: blobOpts.names });
       rows.push({ ch, r });
       const b = r.blob!;
       log(`  ✓ ${tag}: ${b.messages} msg, ${b.attachments} att, ${r.threads} thread(s)${r.privateThreads === "no access (403)" ? ", private threads: no access" : ""}`);
@@ -380,6 +392,12 @@ export async function archiveGuild(
   const sdb = buildServerDb(dir);
   result.sqlite = sdb.path;
   log(`  server.sqlite: ${sdb.messages} messages, ${sdb.channels} channels, ${sdb.threads} threads`);
+  if (blobOpts.extract) {
+    const into = join(dir, "channels");
+    for (const x of done) extractBlob(x.r!.blob!.path, into);
+    result.extracted = into;
+    log(`  extracted ${done.length} channel(s) → ${into}/`);
+  }
 
   const typeName: Record<number, string> = { 0: "text", 2: "voice", 5: "announcement", 13: "stage", 15: "forum", 16: "media" };
   const cell = (s: unknown) => String(s ?? "").replace(/\|/g, "\\|");
@@ -409,10 +427,13 @@ export async function archiveGuild(
 }
 
 /** A channel blob an earlier, unfinished guild run already wrote — only if its manifest reads back cleanly. */
-function keptBlob(dir: string, ch: any): ArchiveResult | null {
-  const name = `${safeName(ch.name, "channel")}-${ch.id}`;
+function keptBlob(dir: string, ch: any, names: NameMode = "keep"): ArchiveResult | null {
+  // the earlier run may have used another naming mode — accept its blob too
+  const name = [...new Set([names, "keep", "safe", "ascii"] as NameMode[])]
+    .map(m => `${safeName(ch.name, "channel", m)}-${ch.id}`)
+    .find(n => existsSync(join(dir, `${n}.tar.gz`)));
+  if (!name) return null;
   const path = join(dir, `${name}.tar.gz`);
-  if (!existsSync(path)) return null;
   const out = Bun.spawnSync(["tar", "-xzOf", path, `${name}/manifest.json`]);
   if (out.exitCode !== 0) return null;
   const m = JSON.parse(out.stdout.toString());

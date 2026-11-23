@@ -2,20 +2,32 @@
 
 Discord fleet infrastructure plugin for [maw-js](https://github.com/Soul-Brews-Studio/maw-js).
 
+## Install
+
 ```
 maw plugin install nat-build-with-oracle/maw-atlas
+maw atlas --help
 ```
+
+Update: `maw plugin update atlas`
 
 ## Commands
 
 ```
 maw atlas ls                          # list guilds + channels
+maw atlas ls phone booth              # only guilds whose name holds every word
 maw atlas read <channel-id> 50 --format json   # read as raw Discord JSON
 maw atlas read <channel-id> --all --since 2026-08-01 --before 2026-08-06
 maw atlas backfill [--all]           # backfill message history
 maw atlas download <guildId|channelId|threadId> [--max=N]   # explicit full download, no cursor
 maw atlas download <channelId|threadId> --out[=DIR]   # + <channel-name>-<channelId>.tar.gz: raw JSON, attachments, threads.md
 maw atlas download <guildId> --out[=DIR]   # whole server: one .tar.gz per channel + server.md + server.sqlite
+maw atlas download phone booth cider --out --extract --safe-names
+#   a guild NAME works where an id does (every word must appear; several or none → candidates listed, nothing downloaded)
+#   --extract: also unpack each blob → <guild folder>/channels/<channel>-<id>/ (messages.jsonl, attachments/, threads.md)
+#   --safe-names: names a shell takes unquoted — Thai kept; emoji, &, ｜, ∕, spaces → "-"   (--ascii: a-z 0-9 . _ - only)
+maw atlas embed <guild folder|guildId|guild name>... [--lance=DIR] [--room=<channelId>]... [--full]
+#   messages → LanceDB for meaning search; see "Search a server by meaning" below
 # download writes rows to the server's own DB: .maw/atlas-route/guilds/<guildId>-<slug>.sqlite (ATLAS_ROUTE_DB overrides)
 maw atlas channel create <guildId> <name> [--type=N] [--parent=<categoryId>]
 maw atlas channel delete <id|#name>...          # dry run: lists what would be deleted
@@ -68,6 +80,60 @@ scripts/build-atlas-view.sh                   # bun build --compile → ./atlas-
   - It loads nothing from Discord: avatars are initials, custom emoji show as `:name:`, and embed images are not shown.
 - An unpacked db still opens in view, showing file names instead of images.
 
+## Search a server by meaning (embed → LanceDB)
+
+`embed` reads a `download <guild> --out` folder (its `server.sqlite`; no Discord calls) and writes, from one
+embedding pass, a LanceDB table `messages` per room, per server, and optionally for several servers together:
+
+```
+<guild folder>/
+├── server.sqlite, server.md, <channel>-<id>.tar.gz …     ← download --out
+├── lance/                                                ← embed: every message of the server
+└── channels/<channel>-<id>/                              ← download --extract: the unpacked blob
+    └── lance/                                            ← embed: this room only (its threads included)
+<DIR>/                                                    ← embed --lance=DIR: every server given, together
+```
+
+```
+maw atlas download phone booth cider --out --extract --safe-names
+maw atlas embed phone booth cider --lance=~/atlas-all     # by name, id, or folder path
+maw atlas embed phone booth cider --lance=~/atlas-all     # again: only new or edited messages are embedded
+maw atlas embed <folder> --room=<channelId> --full        # re-embed one room
+```
+
+- **Text** = the message plus its embeds' title/description/fields, cut at 6000 characters. Messages with no
+  text (attachment-only, joins, pins) get no row.
+- **Incremental**: each row keeps `text_sha` (text + model); unchanged rows are skipped. Room and cross-server
+  tables are rebuilt from the server table, never re-embedded. Rows are committed every 4096 embeddings, so an
+  interrupted run keeps its progress. `--full` re-embeds (new model, new embed server); a model with another
+  vector size is refused without `--full`.
+- **Vectors** come from an Ollama-compatible `/api/embed` server — by default
+  [Chippy](https://github.com/Soul-Brews-Studio/chippy) on the Apple Neural Engine
+  (`http://127.0.0.1:11445`, `embeddinggemma:ane-w8a16`). Ollama: `--url=http://127.0.0.1:11434 --model=embeddinggemma`.
+- **Needs [uv](https://docs.astral.sh/uv/)**: LanceDB has no package a bun plugin can carry without an install
+  step, so `scripts/atlas-lance.py` writes the tables through `uv run --with lancedb --with pyarrow`
+  (wheels cached after the first run).
+
+Columns: `message_id guild_id guild channel_id channel thread_id thread author_id author is_bot ts text content
+attachments text_sha model vector`. Query from Python:
+
+```python
+import json, urllib.request, lancedb
+def vec(q):  # same server + model as the table
+    req = urllib.request.Request("http://127.0.0.1:11445/api/embed",
+        json.dumps({"model": "embeddinggemma:ane-w8a16", "input": [q]}).encode(), {"Content-Type": "application/json"})
+    return json.load(urllib.request.urlopen(req))["embeddings"][0]
+t = lancedb.connect("<guild folder>/channels/<channel>-<id>/lance").open_table("messages")
+for h in t.search(vec("ราคาเบียร์ต่อแก้ว")).limit(5).to_list():
+    print(round(h["_distance"], 3), h["ts"][:10], h["author"], h["text"][:80])
+```
+
+| env | default | used by |
+|---|---|---|
+| `ATLAS_BLOB_DIR` | `~/.maw/atlas-blobs` | `download --out` default, `embed` lookup by id/name (`--from=DIR` overrides) |
+| `ATLAS_EMBED_URL` | `http://127.0.0.1:11445` | `embed` (`--url=`) |
+| `ATLAS_EMBED_MODEL` | `embeddinggemma:ane-w8a16` | `embed` (`--model=`) |
+
 ## Setup
 
 ```bash
@@ -103,6 +169,15 @@ bf channels [query]
 
 Source: `cli/bf.ts`. A native desktop twin (SwiftUI + Tauri) lives in `app/` — dormant since its
 initial 2026-07-15 build, not part of the daily-driver CLI workflow.
+
+## Development
+
+```
+git clone https://github.com/nat-build-with-oracle/maw-atlas && cd maw-atlas
+bun index.ts --help                  # run the plugin from the checkout
+bun test                             # tests/ — names, embed targets, extract + resume, LanceDB self-test (needs uv)
+uv run --with lancedb --with pyarrow python -I scripts/atlas-lance.py self-test   # the LanceDB writer alone
+```
 
 ## License
 
