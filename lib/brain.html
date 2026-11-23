@@ -21,6 +21,10 @@ canvas{display:block}
 .bar>*{pointer-events:auto}
 .brand{font-weight:650;letter-spacing:.02em;display:flex;gap:8px;align-items:center}
 .brand small{color:var(--dim);font-weight:400}
+a.brand{color:var(--fg);text-decoration:none;cursor:pointer}a.brand:hover{color:var(--accent)}
+.story-btns{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0 10px}
+.story a{display:grid;grid-template-columns:92px 1fr;gap:8px;color:var(--fg);text-decoration:none;font-size:12.5px;padding:5px 0;cursor:pointer;border-bottom:1px solid rgba(255,255,255,.04)}
+.story a:hover{color:var(--accent)}.story a.cur{color:var(--accent)}.story a time{color:var(--dim);font-variant-numeric:tabular-nums}.story a small{color:var(--dim);display:block}
 .search{display:flex;align-items:center;gap:6px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:6px 10px;margin-left:auto;backdrop-filter:blur(8px)}
 .search input{background:none;border:0;outline:0;color:var(--fg);width:260px;font:inherit}
 .btn{background:var(--panel);border:1px solid var(--line);color:var(--fg);border-radius:10px;padding:7px 9px;cursor:pointer;display:flex;align-items:center;gap:6px;backdrop-filter:blur(8px);font:inherit}
@@ -54,7 +58,7 @@ svg.i{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2;stroke
 </head>
 <body>
 <div class="bar">
-  <div class="brand"><svg class="i" viewBox="0 0 24 24"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M12 5v13"/></svg>Discord brain <small id="count"></small></div>
+  <a class="brand" id="home" href="./" title="กลับหน้าหลัก (ล้างทุกอย่าง)"><svg class="i" viewBox="0 0 24 24"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M12 5v13"/></svg>Discord brain <small id="count"></small></a>
   <label class="search"><svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><input id="q" placeholder="ค้นความหมาย… แล้วกด Enter"></label>
   <button class="btn" id="links" title="เส้นเชื่อม: เปิด / ปิด"><svg class="i" viewBox="0 0 24 24"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.59 13.51 6.83 3.98M15.41 6.51l-6.82 3.98"/></svg><span id="linksLabel">links: on</span></button>
   <button class="btn" id="spin" title="หมุนอัตโนมัติ"><svg class="i" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg></button>
@@ -190,8 +194,9 @@ function paint() {
   links.material.opacity = focus ? 0.35 : 0.035;
 }
 $("fams").onclick = (e) => { const el = e.target.closest(".fam"); if (!el) return; const k = +el.dataset.k; on.set(k, !on.get(k)); el.classList.toggle("off"); paint(); };
-document.querySelector(".modes").onclick = (e) => { const b = e.target.closest("button"); if (b) setMode(b.dataset.m); };
 function flyTo(i) { const t = new THREE.Vector3(xyz[i * 3], xyz[i * 3 + 1], xyz[i * 3 + 2]); controls.target.copy(t); camera.position.copy(t.clone().add(new THREE.Vector3(0, 10, 45))); controls.autoRotate = false; }
+const HOME_CAM = camera.position.clone();
+function flyHome() { controls.target.set(0, 0, 0); camera.position.copy(HOME_CAM); }
 
 // ---- text: shards of meta.shard points, fetched on demand
 const shards = new Map();
@@ -200,42 +205,126 @@ async function point(i) {
   if (!shards.has(s)) shards.set(s, fetch(`/brain/data/p/${s}.json`).then((r) => r.json()));
   return (await shards.get(s))[i % meta.shard];   // [start_ms, end_ms, thread_or_null, [[ms, who, text, bot], ...]]
 }
-let lastHits = "";
-async function openPoint(i, keepFocus) {
-  const g = groups[grp[i]];
-  if (!keepFocus) { focus = new Set(); for (let j = 0; j < N; j++) if (grp[j] === grp[i]) focus.add(j); focusStrong = new Set([i]); paint(); }
-  flyTo(i);
-  const p = $("panel"); p.classList.add("open");
-  const [start, end, thread, lines] = await point(i);
-  const prev = i > 0 && grp[i - 1] === grp[i] ? i - 1 : -1, next = i + 1 < N && grp[i + 1] === grp[i] ? i + 1 : -1;
-  p.innerHTML = `<h3>${esc(roomTitle(grp[i]))}${thread ? ` <small>› 🧵 ${esc(thread)}</small>` : ""}</h3><div class="meta">${day(start)}${day(end) !== day(start) ? " → " + day(end) : ""} · ${lines.length} message${lines.length > 1 ? "s" : ""} · #${i} · ${g.points.toLocaleString()} chunks in this room</div>
-    <div class="nav"><button class="btn" data-go="${prev}" ${prev < 0 ? "disabled" : ""}>‹ earlier</button><button class="btn" data-go="${next}" ${next < 0 ? "disabled" : ""}>later ›</button></div>
-    ${lines.map(([ms, who, text, bot]) => `<p class="msg${who === meta.owner ? " own" : ""}"><time>${hm(ms)}</time><b>${esc(who)}${bot ? " 🤖" : ""}</b> ${esc(text)}</p>`).join("")}
-    ${lastHits}`;
-}
-$("panel").onclick = (e) => {
-  const b = e.target.closest("[data-go]");
-  if (b && +b.dataset.go >= 0) { const j = +b.dataset.go; if (focus) { focusStrong = new Set([j]); paint(); } return openPoint(j, !!focus); }
-  const a = e.target.closest("a[data-i]"); if (a) openPoint(+a.dataset.i, true);
-};
+const snip = (ls, n = 110) => ls.map((l) => l[2]).join(" ").replace(/\s+/g, " ").slice(0, n);
 
-// ---- search: meaning hits (Chippy) bright, plain substring matches lit too; camera flies to the best
-$("q").onkeydown = async (e) => {
-  const q = e.target.value.trim(); if (e.key !== "Enter" || !q) return;
-  $("status").textContent = "searching…";
-  const r = await fetch("/brain/search", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ query: q, k: 60 }) });
-  const out = await r.json();
-  const hits = out.hits || [], kw = out.keyword || [];
-  focus = new Set([...hits.map((h) => h.i), ...kw]); focusStrong = new Set(hits.slice(0, 15).map((h) => h.i)); paint();
-  const top = hits.slice(0, 12);
-  const rows = await Promise.all(top.map(async (h) => { const [s, , , ls] = await point(h.i); return { h, s, snip: ls.map((l) => l[2]).join(" ").slice(0, 110) }; }));
-  lastHits = `<div class="hits"><div class="meta">"${esc(q)}" · ${hits.length} by meaning · ${kw.length}${kw.length >= 500 ? "+" : ""} containing the words</div>${rows.map(({ h, s, snip }) =>
-    `<a data-i="${h.i}">${esc(snip)}<small>${esc(roomTitle(grp[h.i]))} · ${day(s)} · cos ${h.score}</small></a>`).join("")}</div>`;
-  const first = hits[0]?.i ?? kw[0];
-  if (first !== undefined) openPoint(first, true);
-  $("status").textContent = `${hits.length} meaning hits + ${kw.length} keyword · vector: ${out.vector_from} · ${out.ms} ms`;
+// ---- navigation: everything the user does is a URL state, pushed to history, so Back/Forward work.
+//   ?mode=topic|room|month|source|server  &q=<search>  &story=topic:<id>|room:<i>|q  &p=<point>
+// The title link ("Discord brain") goes back to the plain map: no search, no story, no point.
+const DEFAULT_MODE = insight && topic.length === N ? "topic" : "room";
+const stateFromUrl = () => { const u = new URLSearchParams(location.search); return { mode: u.get("mode") || DEFAULT_MODE, q: u.get("q") || "", story: u.get("story") || "", p: u.has("p") ? +u.get("p") : -1 }; };
+let S = stateFromUrl();
+function go(patch, replace = false) {
+  const next = { ...S, ...patch };
+  const u = new URLSearchParams();
+  if (next.mode !== DEFAULT_MODE) u.set("mode", next.mode);
+  if (next.q) u.set("q", next.q);
+  if (next.story) u.set("story", next.story);
+  if (next.p >= 0) u.set("p", String(next.p));
+  const url = `${location.pathname}${u.toString() ? "?" + u : ""}`;
+  (replace ? history.replaceState : history.pushState).call(history, next, "", url);
+  return render(next);
+}
+addEventListener("popstate", (e) => render(e.state || stateFromUrl()));
+
+// ---- search (cached per query, so Back does not refetch)
+const searches = new Map();
+function search(q) {
+  if (!searches.has(q)) searches.set(q, fetch("/brain/search", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ query: q, k: 60 }) }).then((r) => r.json()));
+  return searches.get(q);
+}
+// ---- story: chunks in time order (server: /brain/api/story), drawn as a line from old (blue) to new (red)
+const stories = new Map();
+function story(key, q) {
+  const k = key === "q" ? `q:${q}` : key;
+  if (!stories.has(k)) {
+    const [kind, id] = key.split(":");
+    const qs = kind === "q" ? `q=${encodeURIComponent(q)}&k=40` : `${kind}=${id}`;
+    stories.set(k, fetch(`/brain/api/story?${qs}&format=json`).then((r) => (r.ok ? r.json() : null)));
+  }
+  return stories.get(k);
+}
+let storyLine = null;
+function drawStory(ids) {
+  if (storyLine) { scene.remove(storyLine); storyLine.geometry.dispose(); storyLine = null; }
+  if (!ids || ids.length < 2) return;
+  const pos = new Float32Array(ids.length * 3), c = new Float32Array(ids.length * 3);
+  ids.forEach((i, k) => {
+    pos.set([xyz[i * 3], xyz[i * 3 + 1], xyz[i * 3 + 2]], k * 3);
+    const col = new THREE.Color().setHSL(0.62 - 0.62 * (k / (ids.length - 1)), 0.85, 0.6); c.set([col.r, col.g, col.b], k * 3);
+  });
+  const g = new THREE.BufferGeometry(); g.setAttribute("position", new THREE.BufferAttribute(pos, 3)); g.setAttribute("color", new THREE.BufferAttribute(c, 3));
+  storyLine = new THREE.Line(g, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.85, depthWrite: false }));
+  scene.add(storyLine);
+}
+
+let renderSeq = 0;
+async function render(st) {
+  const seq = ++renderSeq; S = st;
+  if (st.mode !== mode) setMode(st.mode);
+  if ($("q").value !== st.q) $("q").value = st.q;
+  let hitsBlock = "", storyBlock = "", storyIds = null, hits = [], kw = [], status = "";
+  if (st.q) {
+    $("status").textContent = "searching…";
+    const out = await search(st.q); if (seq !== renderSeq) return;
+    hits = out.hits || []; kw = out.keyword || [];
+    const rows = await Promise.all(hits.slice(0, 12).map(async (h) => { const [s0, , , ls] = await point(h.i); return { h, s0, t: snip(ls) }; }));
+    hitsBlock = `<div class="hits"><div class="meta">"${esc(st.q)}" · ${hits.length} by meaning · ${kw.length}${kw.length >= 500 ? "+" : ""} containing the words</div>
+      <div class="story-btns"><button class="btn" data-story="q">📖 story of these hits, in time order</button></div>${rows.map(({ h, s0, t }) =>
+      `<a data-i="${h.i}">${esc(t)}<small>${esc(roomTitle(grp[h.i]))} · ${day(s0)} · cos ${h.score}</small></a>`).join("")}</div>`;
+    status = `${hits.length} meaning hits + ${kw.length} keyword · vector: ${out.vector_from} · ${out.ms} ms`;
+  }
+  if (st.story) {
+    const sd = await story(st.story, st.q); if (seq !== renderSeq) return;
+    if (sd) {
+      storyIds = sd.ids;
+      const rows = await Promise.all(sd.ids.slice(0, 400).map(async (i) => { const [s0, , th, ls] = await point(i); return { i, s0, th, t: snip(ls, 90) }; }));
+      storyBlock = `<div class="hits story"><div class="meta">📖 story · ${esc(sd.title)} · ${sd.ids.length} chunks · ${sd.first} → ${sd.last} · oldest first (the line on the map: blue = old, red = new)</div>${rows.map(({ i, s0, th, t }) =>
+        `<a data-i="${i}" class="${i === st.p ? "cur" : ""}"><time>${day(s0)}<br>${hm(s0)}</time><span>${esc(t)}<small>${esc(roomTitle(grp[i]))}${th ? " › " + esc(th) : ""}</small></span></a>`).join("")}
+        ${sd.ids.length > 400 ? `<div class="meta">… ${sd.ids.length - 400} more — the whole story as text: <a href="/brain/api/story?${st.story.startsWith("q") ? "q=" + encodeURIComponent(st.q) : st.story.replace(":", "=")}" target="_blank">/brain/api/story</a></div>` : ""}</div>`;
+      status = `story: ${sd.ids.length} chunks ${sd.first} → ${sd.last}`;
+    }
+  }
+  drawStory(storyIds);
+  // focus: story > search > the open point's room > nothing
+  if (storyIds) { focus = new Set(storyIds); focusStrong = new Set(st.p >= 0 ? [st.p] : []); }
+  else if (st.q) { focus = new Set([...hits.map((h) => h.i), ...kw]); focusStrong = new Set(st.p >= 0 ? [st.p] : hits.slice(0, 15).map((h) => h.i)); }
+  else if (st.p >= 0) { focus = new Set(); for (let j = 0; j < N; j++) if (grp[j] === grp[st.p]) focus.add(j); focusStrong = new Set([st.p]); }
+  else { focus = focusStrong = null; }
+  paint();
+  const panel = $("panel");
+  if (st.p >= 0) {
+    const i = st.p, g = groups[grp[i]];
+    flyTo(i);
+    const [start, end, thread, lines] = await point(i); if (seq !== renderSeq) return;
+    let prev = -1, next = -1;
+    if (storyIds) { const k = storyIds.indexOf(i); if (k > 0) prev = storyIds[k - 1]; if (k >= 0 && k + 1 < storyIds.length) next = storyIds[k + 1]; }
+    else { prev = i > 0 && grp[i - 1] === grp[i] ? i - 1 : -1; next = i + 1 < N && grp[i + 1] === grp[i] ? i + 1 : -1; }
+    const tp = insight && topic[i] !== 65535 ? insight.topics[topic[i]] : null;
+    panel.innerHTML = `<h3>${esc(roomTitle(grp[i]))}${thread ? ` <small>› 🧵 ${esc(thread)}</small>` : ""}</h3><div class="meta">${day(start)}${day(end) !== day(start) ? " → " + day(end) : ""} · ${lines.length} message${lines.length > 1 ? "s" : ""} · #${i} · ${g.points.toLocaleString()} chunks in this room${tp ? ` · topic ${tp.id}: ${esc(tp.label)}` : ""}</div>
+      <div class="nav"><button class="btn" data-go="${prev}" ${prev < 0 ? "disabled" : ""}>‹ earlier</button><button class="btn" data-go="${next}" ${next < 0 ? "disabled" : ""}>later ›</button></div>
+      <div class="story-btns">${tp ? `<button class="btn" data-story="topic:${tp.id}">📖 story of topic ${tp.id}</button>` : ""}<button class="btn" data-story="room:${grp[i]}">📖 story of this room</button></div>
+      ${lines.map(([ms, who, text, bot]) => `<p class="msg${who === meta.owner ? " own" : ""}"><time>${hm(ms)}</time><b>${esc(who)}${bot ? " 🤖" : ""}</b> ${esc(text)}</p>`).join("")}
+      ${storyBlock}${hitsBlock}`;
+    panel.classList.add("open");
+  } else if (storyBlock || hitsBlock) {
+    panel.innerHTML = storyBlock + hitsBlock; panel.classList.add("open");
+    if (!storyIds && hits[0]) flyTo(hits[0].i); else if (storyIds) flyTo(storyIds[0]);
+  } else {
+    panel.classList.remove("open"); panel.innerHTML = ""; flyHome();
+  }
+  $("status").textContent = status || `built ${meta.built.slice(0, 16)} · ${(pairs.length / 2).toLocaleString()} links shown (${longDropped.toLocaleString()} long hidden)`;
+}
+
+// ---- every click is a navigation
+document.querySelector(".modes").onclick = (e) => { const b = e.target.closest("button"); if (b && b.dataset.m !== S.mode) go({ mode: b.dataset.m }); };
+$("panel").onclick = (e) => {
+  const b = e.target.closest("[data-go]"); if (b) { if (+b.dataset.go >= 0) go({ p: +b.dataset.go }); return; }
+  const sb = e.target.closest("[data-story]"); if (sb) { go({ story: sb.dataset.story }); return; }
+  const a = e.target.closest("a[data-i]"); if (a) { e.preventDefault(); go({ p: +a.dataset.i }); }
 };
-$("reset").onclick = () => { focus = focusStrong = null; lastHits = ""; paint(); $("panel").classList.remove("open"); controls.target.set(0, 0, 0); };
+$("q").onkeydown = (e) => { const q = e.target.value.trim(); if (e.key === "Enter" && q) go({ q, p: -1, story: "" }); };
+$("home").onclick = (e) => { e.preventDefault(); go({ mode: DEFAULT_MODE, q: "", story: "", p: -1 }); };
+$("reset").onclick = () => go({ q: "", story: "", p: -1 });
 $("spin").onclick = () => { controls.autoRotate = !controls.autoRotate; };
 
 // ---- hover + click
@@ -253,12 +342,14 @@ addEventListener("pointermove", (e) => {
   else t.style.display = "none";
 });
 renderer.domElement.addEventListener("pointerdown", (e) => { down = [e.clientX, e.clientY]; });
-renderer.domElement.addEventListener("pointerup", (e) => { if (down && Math.hypot(e.clientX - down[0], e.clientY - down[1]) < 4 && hover >= 0) { lastHits = ""; openPoint(hover); } down = null; });
+// a click on a point keeps a running story or search (its panel lists stay), otherwise it opens the point alone
+renderer.domElement.addEventListener("pointerup", (e) => { if (down && Math.hypot(e.clientX - down[0], e.clientY - down[1]) < 4 && hover >= 0) go({ p: hover }); down = null; });
 addEventListener("resize", () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
 
-setMode(insight && topic.length === N ? "topic" : "room");
-$("status").textContent = `built ${meta.built.slice(0, 16)} · ${(pairs.length / 2).toLocaleString()} links shown (${longDropped.toLocaleString()} long hidden)`;
-window.__brain = { N, links: pairs.length / 2, longDropped, rooms: groups.length, servers: servers.length };
+setMode(S.mode);
+history.replaceState(S, "", location.href);
+await render(S);
+window.__brain = { N, links: pairs.length / 2, longDropped, rooms: groups.length, servers: servers.length, state: () => S, story: () => storyLine ? storyLine.geometry.attributes.position.count : 0 };
 renderer.setAnimationLoop(() => { controls.update(); renderer.render(scene, camera); });
 </script>
 </body>

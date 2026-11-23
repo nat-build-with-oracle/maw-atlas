@@ -152,6 +152,9 @@ maw atlas brain serve my server                         # http://127.0.0.1:7720/
   script shows `links_same_script` near 1.0 while random is lower.
 - **Page** (three.js): colour by room / month / source (people, bots, both) / server, click a point to read the chunk
   with earlier/later, search by meaning (query prompt, same embed server) plus plain words.
+  **Story**: "📖 story of topic / room / these hits" lists the chunks oldest first and draws them as a line on the map
+  (blue = old, red = new); earlier/later then walk the story. **Every click is a URL** (`?mode=&q=&story=&p=`), so Back
+  and Forward work and a view can be bookmarked; the "Discord brain" title goes back to the plain map.
 - **Topics** (`brain insight`, also run by `build`): HDBSCAN on the map + c-TF-IDF keywords (Thai words from
   PyThaiNLP `newmm`; names, fillers and stopwords removed) — the BERTopic recipe. Per topic: keywords, size, rooms,
   people, first/last day, and "rising" (share in the last 14 days ÷ the overall share). Colour mode `topic`.
@@ -165,6 +168,7 @@ maw atlas brain serve my server                         # http://127.0.0.1:7720/
   | `/brain/api/rooms/<i>` | the same bundle for one room, newest first |
   | `/brain/api/context?q=...` | meaning search → the hit chunks as one bundle (RAG / "summarize this") |
   | `/brain/api/report.md` | the old-school report: numbers, hour histogram, busiest days, rooms, topics table |
+  | `/brain/api/story?topic=<id>\|room=<i>\|q=...` | the same chunks in **time order**, oldest first ("the timestamp is the truth"): markdown for an LLM to retell, or `?format=json` ordered ids |
 
   `curl -s 127.0.0.1:7720/brain/api/topics/2 | <your LLM CLI> "summarize"` — the server never calls a model itself.
 - **Local only**: binds 127.0.0.1 (or a tailscale 100.x address via `--host`); the brain folder holds message text.

@@ -9,6 +9,9 @@
  *   GET /brain/api/rooms/:i             the same bundle for one room (groups[i] in meta.json), newest chunks first
  *   GET /brain/api/context?q=...        meaning search → the hit chunks as one bundle (for RAG / "summarize this")
  *   GET /brain/api/report.md            the old-school report: numbers, hour histogram, busiest days, topics table
+ *   GET /brain/api/story?topic=|room=|q=  the same chunks in TIME order (oldest first) — "the timestamp is the truth":
+ *                                       ?format=json gives the ordered ids (the page draws them as a line), md the
+ *                                       line-by-line story for an LLM to retell
  *
  * Nothing here calls an LLM or leaves the machine: a bundle is the text an LLM would need, with an instruction line
  * on top; the caller decides which model reads it. Topics come from `atlas-brain.py insight` (HDBSCAN on the map +
@@ -72,7 +75,8 @@ export async function brainApi(d: BrainData, path: string, url: URL): Promise<Re
   if (rest === "") {
     return Response.json({
       endpoints: ["/brain/api/overview", "/brain/api/topics", "/brain/api/topics/:id?format=md|json&max_chars=12000",
-        "/brain/api/rooms/:i?format=md|json&max_chars=12000", "/brain/api/context?q=...&k=20&max_chars=12000", "/brain/api/report.md"],
+        "/brain/api/rooms/:i?format=md|json&max_chars=12000", "/brain/api/context?q=...&k=20&max_chars=12000", "/brain/api/report.md",
+        "/brain/api/story?topic=<id>|room=<i>|q=...&format=md|json"],
       topics: !!ins, note: ins ? undefined : "no insight.json — run: maw atlas brain insight <brain dir>",
     });
   }
@@ -115,7 +119,45 @@ export async function brainApi(d: BrainData, path: string, url: URL): Promise<Re
       pack(d, r.hits.map(h => h.i), maxChars), r.hits.length, format, { hits: r.hits });
   }
   if (rest === "/report.md") return md(report(d));
+  if (rest === "/story") {
+    const sel = await storySelect(d, url);
+    if ("error" in sel) return Response.json({ error: sel.error }, { status: sel.status });
+    const ids = sel.ids.sort((a, b) => d.points[a][0] - d.points[b][0] || a - b);
+    if (!ids.length) return Response.json({ error: "nothing selected" }, { status: 404 });
+    const first = d.points[ids[0]][0], last = d.points[ids[ids.length - 1]][1];
+    if (format === "json" && url.searchParams.get("text") !== "1") {
+      return Response.json({ title: sel.title, ids, first: day(first), last: day(last), starts: ids.map(i => d.points[i][0]) });
+    }
+    const facts = [...sel.facts, `${ids.length} chunks, ${day(first)} → ${day(last)}, oldest first (times Asia/Bangkok, from Discord's own message ids)`];
+    return bundle(`Story: ${sel.title}`, "Tell what happened in order — when, who, what changed, what was decided. The timestamps are the truth: keep the order, quote dates and numbers exactly, invent nothing.",
+      facts, pack(d, ids, maxChars), ids.length, format, { ids });
+  }
   return Response.json({ error: "unknown endpoint — see /brain/api" }, { status: 404 });
+}
+
+/** Which chunks a story is about: a topic, a room, or a meaning search. */
+async function storySelect(d: BrainData, url: URL): Promise<{ ids: number[]; title: string; facts: string[] } | { error: string; status: number }> {
+  const t = url.searchParams.get("topic"), r = url.searchParams.get("room"), q = (url.searchParams.get("q") || "").trim();
+  if (t !== null) {
+    const tp = d.insight?.topics?.[Number(t)];
+    if (!tp || !d.topic) return { error: "no such topic", status: 404 };
+    const ids: number[] = [];
+    for (let i = 0; i < d.topic.length; i++) if (d.topic[i] === tp.id) ids.push(i);
+    return { ids, title: `topic ${tp.id} · ${tp.keywords.slice(0, 4).join(", ")}`, facts: [`keywords (c-TF-IDF): ${tp.keywords.join(", ")}`] };
+  }
+  if (r !== null) {
+    const gi = Number(r);
+    if (!d.meta.groups[gi]) return { error: "no such room", status: 404 };
+    const ids: number[] = [];
+    for (let i = 0; i < d.grp.length; i++) if (d.grp[i] === gi) ids.push(i);
+    return { ids, title: `room ${roomTitle(d, gi)}`, facts: [] };
+  }
+  if (q) {
+    const k = Math.min(Math.max(1, Number(url.searchParams.get("k")) || 40), 300);
+    const res = await d.search(q, k);
+    return { ids: res.hits.map(h => h.i), title: `"${q}"`, facts: [`query: ${q}`, `the ${res.hits.length} chunks nearest in meaning (${res.from}), then put in time order`] };
+  }
+  return { error: "say topic=, room= or q=", status: 400 };
 }
 
 /** The old-school report: plain numbers and text bars, no model. */

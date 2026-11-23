@@ -51,6 +51,16 @@ describe("brain server", async () => {
     expect(j.chunks_total).toBe(2);
     expect((await fetch(`${base}/brain/api/rooms/9`)).status).toBe(404);
   });
+  test("api: story = the selection in time order", async () => {
+    const j: any = await (await fetch(`${base}/brain/api/story?room=0&format=json`)).json();
+    expect(j.ids).toEqual([0, 2]);
+    expect(j.title).toContain("#general");
+    const t = await (await fetch(`${base}/brain/api/story?room=0`)).text();
+    expect(t).toContain("# Story: room #general");
+    expect(t).toContain("oldest first");
+    expect((await fetch(`${base}/brain/api/story`)).status).toBe(400);
+    expect((await fetch(`${base}/brain/api/story?topic=0`)).status).toBe(404);
+  });
   test("refuses a public bind", async () => {
     expect(startBrain(dir, { host: "0.0.0.0", port: 0 })).rejects.toThrow(/refusing to bind/);
   });
