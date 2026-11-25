@@ -1,5 +1,5 @@
 /**
- * brain.html in a real headless Chrome: load, Separate / Combined toggle, search, Back / Forward, the title link.
+ * brain.html in a real headless Chrome: load, Separate / Combined toggle, search, Back / Forward, time machine, the title link.
  *
  * No npm deps: Chrome is started with --remote-debugging-port and driven over the DevTools protocol with Bun's own
  * WebSocket. Skipped when Chrome is missing (CI without a browser) or the three.js CDN is unreachable (offline).
@@ -41,6 +41,8 @@ function writeBrain() {
     islands: [0, 1, 2].map((g) => ({ g, n: 20, r: 14, how: "pca", c: [(g - 1) * 70, 0, 4] })) }));
   mkdirSync(join(dir, "p"));
   const day = Date.UTC(2026, 10, 1);
+  // one chunk an hour from 2026-11-01 00:00 UTC: Bangkok days Nov 1 (17 chunks), Nov 2 (24), Nov 3 (19)
+  writeFileSync(join(dir, "t0.u32"), Uint32Array.from({ length: N }, (_, i) => (day + i * 3.6e6) / 1000));
   writeFileSync(join(dir, "p", "0.json"), JSON.stringify(Array.from({ length: N }, (_, i) =>
     [day + i * 3.6e6, day + i * 3.6e6 + 6e5, null, [[day + i * 3.6e6, "a", `${rooms[grp[i]]} chunk ${i} ${i % 3 ? "about cider" : "about beer"}`, 0]]])));
 }
@@ -142,6 +144,27 @@ describe.skipIf(!CHROME || !online)("brain.html in headless Chrome", () => {
     await cdp.until("window.__brain && window.__brain.layout().name === 'rooms'", 120000);
     expect(await cdp.eval("window.__brain.layout().gliding")).toBe(false);
     expect(await cdp.eval("document.querySelector('#layoutSeg button.on').dataset.layout")).toBe("rooms");
+  }, 60000);
+
+  test("time machine: one tick per day, ▲ travels back a day at a time, later chunks leave the map, Back and Now return", async () => {
+    const tm = () => cdp.eval("window.__brain.tm()");
+    const t = () => cdp.eval("new URLSearchParams(location.search).get('t')");
+    expect(await tm()).toMatchObject({ t: "", days: 3, first: "2026-11-01", last: "2026-11-03", shown: N, ticks: 3 });
+    expect(await cdp.eval("document.getElementById('tmDown').disabled")).toBe(true);
+    await cdp.eval("document.getElementById('tmUp').click()");
+    await cdp.until("new URLSearchParams(location.search).get('t') === '2026-11-03'");
+    await cdp.eval("document.getElementById('tmUp').click()");
+    await cdp.until("window.__brain.tm().t === '2026-11-02'");
+    expect(await tm()).toMatchObject({ shown: 17 + 24 });
+    expect(await cdp.eval("document.getElementById('panel').classList.contains('open')")).toBe(false);   // the map changes, no side panel
+    expect(await cdp.eval("document.getElementById('status').textContent")).toContain("41 of 60 chunks existed · 24 that day");
+    await cdp.eval("history.back()");
+    await cdp.until("window.__brain.tm().t === '2026-11-03'");
+    expect(await tm()).toMatchObject({ shown: N });
+    await cdp.eval("document.getElementById('tmNow').click()");
+    await cdp.until("window.__brain.tm().t === ''");
+    expect(await t()).toBe(null);
+    expect(cdp.errors).toEqual([]);
   }, 60000);
 
   test("the title link resets everything, Combined included", async () => {
