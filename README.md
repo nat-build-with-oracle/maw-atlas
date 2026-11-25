@@ -161,6 +161,10 @@ maw atlas brain ontology my server                      # Apache Ossie YAML → 
   its own UMAP on the same vectors, room names on the largest twelve; the points glide between the two. `brain insight`
   writes `sep.f32` + `sep.json` (UMAP for rooms of 20+ chunks, PCA for 4-19, a small cluster below that); an older
   brain gets it from `brain insight <brain dir>` without re-embedding.
+  **Time machine** (right edge, `?t=YYYY-MM-DD`): like macOS Time Machine, a column of days, oldest at the top and
+  Now at the bottom, one tick per day that has chunks (longer = busier). Click a day (or ▲ / ▼ to step) and the map
+  shows only what existed by the end of that day (Bangkok time), that day's chunks lit, the counts in the status
+  line (no side panel); Now returns. Build writes `t0.u32` (each chunk's start); an older brain gets it from `brain insight <brain dir>`.
 - **Topics** (`brain insight`, also run by `build`): HDBSCAN on the map + c-TF-IDF keywords (Thai words from
   PyThaiNLP `newmm`; names, fillers and stopwords removed) — the BERTopic recipe. Per topic: keywords, size, rooms,
   people, first/last day, and "rising" (share in the last 14 days ÷ the overall share). Colour mode `topic`.

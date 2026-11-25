@@ -4,6 +4,7 @@
 usage:
   atlas-brain.py insight <brain dir>     topics (HDBSCAN + c-TF-IDF) + stats → insight.json, topic.u16, + separate
   atlas-brain.py separate <brain dir>    the "separate" layout: one island per room → sep.f32, sep.json
+  atlas-brain.py timeline <brain dir>    chunk start times → t0.u32 (build and insight write it; this is for old brains)
   atlas-brain.py build <guild-folder>... --out DIR [--gap H] [--chars N] [--min-chars N] [--url URL] [--model M]
   atlas-brain.py self-test
 
@@ -26,6 +27,7 @@ Written to DIR (local data: message text — never commit it):
 
   xyz.f32  float32 [n x 3], about ±100        grp.u32  uint32 [n], room (channel) of each point
   src.u8   0 people, 1 bots, 2 both            mon.u16  uint16 [n], months since 2000-01
+  t0.u32   uint32 [n], chunk start in unix seconds (the page's time-travel timeline)
   gld.u8   uint8 [n], which server             knn.u32  uint32 [n x 4] nearest in meaning, knn_cos.f16 their cosine
   vec.i8   int8 [n x 256] for search           p/<s>.json  64 points a shard: [start_ms, end_ms, thread_or_null, [[ms, who, text, bot], ...]]
   meta.json  counts, groups (room title, server, points, centroid), servers, stats, timings
@@ -237,6 +239,7 @@ def build(folders, out, gap=3.0, chars=1200, min_chars=40, url=DEFAULT_URL, mode
     np.array([p["si"] for p in points], np.uint8).tofile(out / "gld.u8")
     mon = [(time.gmtime(p["start"] / 1000).tm_year - 2000) * 12 + time.gmtime(p["start"] / 1000).tm_mon - 1 for p in points]
     np.array(mon, np.uint16).tofile(out / "mon.u16")
+    np.array([p["start"] // 1000 for p in points], np.uint32).tofile(out / "t0.u32")
     knn.tofile(out / "knn.u32")
     (1 - kdist).astype(np.float16).tofile(out / "knn_cos.f16")
     scale = 127 / float(np.abs(X).max())
@@ -313,6 +316,18 @@ def tokenizer(names=()):
     return words
 
 
+def timeline(out):
+    """t0.u32 (chunk start, unix seconds) for a brain built before build wrote it: read back from the text shards."""
+    import numpy as np
+    out = Path(out)
+    meta = json.loads((out / "meta.json").read_text())
+    t0 = []
+    for s in range(0, meta["n"], meta["shard"]):
+        t0 += [int(p[0]) // 1000 for p in json.loads((out / "p" / f"{s // meta['shard']}.json").read_text())]
+    np.array(t0, np.uint32).tofile(out / "t0.u32")
+    say(f"timeline: {len(t0):,} chunk start times → {out / 't0.u32'}")
+
+
 def insight(out):
     import numpy as np
     from collections import Counter, defaultdict
@@ -325,6 +340,8 @@ def insight(out):
     vec /= np.linalg.norm(vec, axis=1, keepdims=True) + 1e-9
     grp = np.fromfile(out / "grp.u32", np.uint32)
     src = np.fromfile(out / "src.u8", np.uint8)
+    if not (out / "t0.u32").exists():
+        timeline(out)
     pts = []
     for s_ in range(0, n, meta["shard"]):
         pts.extend(json.loads((out / "p" / f"{s_ // meta['shard']}.json").read_text()))
@@ -550,6 +567,11 @@ def self_test():
         p0 = json.loads((out / "p" / "0.json").read_text())
         ok(len(p0) == 24 and len(p0[0][3]) == 3 and p0[0][3][0][1] == "botty", "shard holds lines with author names")
         ok("botty" not in (out / "meta.json").read_text() and meta["owner"] == "nat", "owner = most active person")
+        t0 = np.fromfile(out / "t0.u32", np.uint32)
+        ok(t0.size == 24 and all(int(t0[i]) == p0[i][0] // 1000 for i in range(24)), "t0.u32 = each chunk's start, unix seconds")
+        (out / "t0.u32").unlink()
+        timeline(out)
+        ok(np.array_equal(np.fromfile(out / "t0.u32", np.uint32), t0), "timeline rebuilds t0.u32 from the shards")
         again = build(folders, out, url="fake:768", model="m")
         ok(again["counts"]["embedded_now"] == 0, "rebuild embeds 0 (cache)")
         over, topics = insight(out)
@@ -577,6 +599,8 @@ if __name__ == "__main__":
         insight(a["out"])
     elif len(sys.argv) > 2 and sys.argv[1] == "insight":
         insight(sys.argv[2])
+    elif len(sys.argv) > 2 and sys.argv[1] == "timeline":
+        timeline(sys.argv[2])
     elif len(sys.argv) > 2 and sys.argv[1] == "separate":
         separate(sys.argv[2])
     elif len(sys.argv) > 1 and sys.argv[1] == "self-test":

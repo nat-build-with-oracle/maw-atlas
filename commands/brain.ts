@@ -51,6 +51,7 @@ function usage(log: Log) {
   log("         /brain/api: overview, topics, topics/:id + rooms/:i + context?q= (LLM-ready markdown), report.md, ontology");
   log("       maw atlas brain ontology <brain dir|guild> [--out=DIR]   Apache Ossie YAML (ontology, semantic model, mapping)");
   log("  layout: the page has Combined (one meaning space) and Separate (one island per room); insight writes sep.f32");
+  log("  time machine: a day column on the right edge (?t=YYYY-MM-DD) shows the map as it was that day; build writes t0.u32");
 }
 
 async function pump(stream: ReadableStream<Uint8Array>, log: Log) {
