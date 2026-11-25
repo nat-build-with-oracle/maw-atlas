@@ -70,7 +70,7 @@ svg.i{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2;stroke
 .tm-track{position:relative;flex:1;width:100%;cursor:pointer;touch-action:none}
 .tm-track::before{content:"";position:absolute;right:-6px;top:-4px;bottom:-4px;width:46px;border-radius:10px;background:rgba(255,255,255,0);transition:background .2s}
 .tm-track:hover::before,.tm-track.drag::before{background:rgba(255,255,255,.045)}
-.tm-sel{position:absolute;right:0;left:0;height:0;pointer-events:none;transition:top .38s cubic-bezier(.34,1.4,.64,1),opacity .25s;opacity:0}
+.tm-sel{position:absolute;right:0;left:0;height:0;pointer-events:none;transition:top .9s cubic-bezier(.87,0,.13,1),opacity .4s;opacity:0}
 .tm-sel.on{opacity:1}.tm-sel::after{content:"";position:absolute;right:0;width:34px;height:3px;border-radius:2px;background:#ff4d4d;transform:translateY(-50%);box-shadow:0 0 10px #ff4d4d}
 .tm-sel span{position:absolute;right:40px;transform:translateY(-50%);font:600 11.5px/1 -apple-system,system-ui,sans-serif;color:#ff6b6b;white-space:nowrap;background:rgba(0,0,0,.6);padding:3px 6px;border-radius:5px}
 .tm-track i{position:absolute;right:0;height:1px;background:rgba(255,255,255,.32);transform:translateY(-50%);transition:width .14s ease-out,background .14s}
@@ -253,9 +253,10 @@ function visible(i) { return on.get(keyOf(i)) !== false && inTime(i); }
 // resting brightness: a 100k-point map must stay faint or it turns white; a few thousand points can glow like the
 // focus view (Nat 2026-11-23: the lit story view is "the best reference")
 const REST = N > 20000 ? 1 : N > 5000 ? 1.25 : 1.6, REST_LINKS = N > 20000 ? 0.035 : N > 5000 ? 0.09 : 0.2;
-// brightness per point animates to its new value over PAINT_MS: points leaving fade out, points arriving pop in
-// (ease-out-back overshoot, a short flash) — time travel, search, story and legend toggles all go through here
-const kNow = new Float32Array(N), kFrom = new Float32Array(N), kTo = new Float32Array(N), PAINT_MS = 650;
+// brightness per point animates to its new value over PAINT_MS with ease-in-out-expo (slow start, fast middle, slow
+// end): points leaving fade out, points arriving fade in — time travel, search, story and legend toggles all use it
+const kNow = new Float32Array(N), kFrom = new Float32Array(N), kTo = new Float32Array(N), PAINT_MS = 1400;
+const expo = (u) => (u <= 0 ? 0 : u >= 1 ? 1 : u < 0.5 ? Math.pow(2, 20 * u - 10) / 2 : (2 - Math.pow(2, -20 * u + 10)) / 2);
 let kAnim = null, painted = false;
 function applyK() {
   for (let i = 0; i < N; i++) { const k = kNow[i]; col[i * 3] = base[i * 3] * k; col[i * 3 + 1] = base[i * 3 + 1] * k; col[i * 3 + 2] = base[i * 3 + 2] * k; }
@@ -270,8 +271,8 @@ function paint() {
 }
 function stepPaint(now) {
   if (!kAnim) return;
-  const u = Math.min(1, (now - kAnim.t0) / PAINT_MS), e = 1 - Math.pow(1 - u, 3), b = 1 + 2.70158 * Math.pow(u - 1, 3) + 1.70158 * Math.pow(u - 1, 2);
-  for (let i = 0; i < N; i++) { const a = kFrom[i], z = kTo[i]; kNow[i] = a + (z - a) * (z > a ? b : e); }
+  const u = Math.min(1, (now - kAnim.t0) / PAINT_MS), e = expo(u);
+  for (let i = 0; i < N; i++) { const a = kFrom[i]; kNow[i] = a + (kTo[i] - a) * e; }
   applyK();
   links.material.opacity = kAnim.lf + (kAnim.lt - kAnim.lf) * e;
   if (u >= 1) kAnim = null;
@@ -291,10 +292,10 @@ async function point(i) {
 }
 const snip = (ls, n = 110) => ls.map((l) => l[2]).join(" ").replace(/\s+/g, " ").slice(0, n);
 
-// ---- layout: Combined (all) / Separate (rooms). Points glide between the two over GLIDE ms (ease in-out); links
+// ---- layout: Combined (all) / Separate (rooms). Points glide between the two over GLIDE ms (ease-in-out-expo); links
 // switch to the target layout's own set; room names float over the islands in Separate.
 let layout = "all", glide = null;
-const GLIDE = 1200;
+const GLIDE = 1600;   // ease-in-out-expo, like every other move on the map
 function setLayout(name, instant = false) {
   if (!LAYOUTS[name]) name = "all";
   if (name === layout && !glide) return;
@@ -307,7 +308,7 @@ function setLayout(name, instant = false) {
 }
 function stepGlide(now) {
   if (!glide) return;
-  const u = Math.min(1, (now - glide.t0) / GLIDE), e = u < 0.5 ? 4 * u * u * u : 1 - Math.pow(-2 * u + 2, 3) / 2;
+  const u = Math.min(1, (now - glide.t0) / GLIDE), e = expo(u);
   const A = glide.from, B = glide.to;
   for (let k = 0; k < N * 3; k++) xyz[k] = A[k] + (B[k] - A[k]) * e;
   geo.attributes.position.needsUpdate = true;
@@ -493,7 +494,7 @@ function drawTimeline() {
   });
   if (tmHover !== null && tmHover !== tDay) html += `<b class="hov" style="top:${tmY(tmHover, H)}px">${dayLabel(tmHover)} · ${dayCount.get(tmHover)}</b>`;
   ticks.innerHTML = html;
-  // the red marker is one element that slides (CSS transition with a little overshoot) instead of being redrawn
+  // the red marker is one element that slides (CSS transition, ease-in-out-expo like the points) instead of being redrawn
   selEl.classList.toggle("on", tDay !== null);
   if (tDay !== null) { selEl.style.top = `${tmY(tDay, H)}px`; selEl.firstChild.textContent = dayLabel(tDay); }
   const k = tDay === null ? DAYS.length : DAYS.indexOf(tDay);
