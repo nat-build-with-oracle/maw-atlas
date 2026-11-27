@@ -21,7 +21,7 @@ const N = 60, dir = mkdtempSync(join(tmpdir(), "atlas-brain-page-"));
 function writeBrain() {
   const xyz = new Float32Array(N * 3), sep = new Float32Array(N * 3), grp = new Uint32Array(N), knn = new Uint32Array(N * 2);
   for (let i = 0; i < N; i++) {
-    const g = Math.floor(i / 20), a = i * 2.4;
+    const g = Math.floor(i / 20), a = i * 0.105;   // consecutive points close on the ring, so inner links are short and shown
     grp[i] = g;
     xyz.set([Math.cos(a) * 30 + g * 8, Math.sin(a) * 30, (i % 7) * 4 - 12], i * 3);           // rooms mixed together
     sep.set([(g - 1) * 70 + Math.cos(a) * 12, Math.sin(a) * 12, (i % 5) * 2], i * 3);          // rooms apart
@@ -164,6 +164,17 @@ describe.skipIf(!CHROME || !online)("brain.html in headless Chrome", () => {
     await cdp.eval("document.getElementById('tmNow').click()");
     await cdp.until("window.__brain.tm().t === ''");
     expect(await t()).toBe(null);
+    expect(cdp.errors).toEqual([]);
+  }, 60000);
+
+  test("lightning: chunks that come into existence strike their links to older chunks", async () => {
+    // the 24 chunks of 2026-11-02 against the 17 of 2026-11-01: the sweep from the end of day 1 to the end of day 2
+    const day1 = Date.UTC(2026, 10, 1, 17) / 1000, day2 = day1 + 86400;
+    const before = await cdp.eval<number>("window.__brain.bolts().struck");
+    const after = await cdp.eval<number>(`window.__brain.spark(${day1}, ${day2})`);
+    expect(after).toBeGreaterThan(before);
+    expect(await cdp.eval<number>("window.__brain.bolts().live")).toBeGreaterThan(0);
+    expect(await cdp.eval<number>(`window.__brain.spark(${day2}, ${day1})`)).toBe(after);   // backwards: no strikes
     expect(cdp.errors).toEqual([]);
   }, 60000);
 
