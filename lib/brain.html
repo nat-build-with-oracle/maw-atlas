@@ -301,8 +301,12 @@ function travelTo(day) {
   // forward (the map grows, lightning strikes) runs slow so it can be watched; back to the past runs fast
   // (Nat 2026-11-27: "slow when forward and back to the past fast")
   const fwd = to > tCut;
-  tAnim = { from: tCut, to, twFrom: tw, twTo, t0: performance.now(), cont,
-    dur: fwd ? (cont ? Math.min(2400, 900 + 80 * dist) : Math.min(6000, 2200 + 140 * dist))
+  // forward is paced by chunks, not by days: the cutoff moves so that about the same number of chunks appear every
+  // moment, so quiet early days fly past and the busy recent days (many dots, many strikes) play slowly
+  // (Nat 2026-11-27: "back to future ... fast to slow becoz node many dot many in the recently")
+  const n0 = existedBy(tCut), n1 = existedBy(to), chunks = Math.abs(n1 - n0);
+  tAnim = { from: tCut, to, twFrom: tw, twTo, t0: performance.now(), cont, fwd, n0, n1,
+    dur: fwd ? (cont ? Math.min(2400, 900 + 80 * dist) : Math.min(9000, Math.max(2200, 1800 + 4 * chunks)))
              : (cont ? Math.min(900, 350 + 25 * dist) : Math.min(1600, 700 + 35 * dist)) };
   bigShow();
 }
@@ -318,7 +322,13 @@ function stepPaint(now) {
   if (tAnim) {
     const u = Math.min(1, (now - tAnim.t0) / tAnim.dur), e = tAnim.cont ? outExpo(u) : expo(u);
     const prevCut = tCut;
-    tCut = tAnim.from + (tAnim.to - tAnim.from) * e; tw = tAnim.twFrom + (tAnim.twTo - tAnim.twFrom) * e;
+    if (tAnim.fwd && !tAnim.cont && tAnim.n1 - tAnim.n0 > 1) {
+      // through chunk ranks: rank r(e) between the two cutoffs, then the time of that rank (between its neighbours)
+      const r = tAnim.n0 + (tAnim.n1 - tAnim.n0) * e, k = Math.min(tAnim.n1 - 1, Math.floor(r)), f = r - k;
+      const a = k <= tAnim.n0 ? tAnim.from : sortedT0[k - 1], b = k >= tAnim.n1 - 1 ? tAnim.to : sortedT0[k];
+      tCut = u >= 1 ? tAnim.to : Math.max(tCut, a + (b - a) * f);
+    } else tCut = tAnim.from + (tAnim.to - tAnim.from) * e;
+    tw = tAnim.twFrom + (tAnim.twTo - tAnim.twFrom) * e;
     if (tCut > prevCut) sparkBetween(prevCut, tCut, now);
     const done = u >= 1; if (done) tAnim = null;
     bigUpdate(done); placeMarker();
