@@ -79,8 +79,8 @@ svg.i{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2;stroke
 .tm-track b.sel{color:#ff6b6b}.tm-track b.hov{color:var(--accent);font-size:12px;background:rgba(0,0,0,.75);padding:3px 6px;border-radius:5px;z-index:2}
 .tm-now{font:600 11px/1 -apple-system,system-ui,sans-serif;color:#ff4d4d;cursor:pointer;padding:2px 0}.tm-now.off{color:var(--dim)}
 .tm-cap{font-size:10.5px;color:var(--dim);text-align:right}
-.tm-play{display:flex;gap:6px;justify-content:flex-end}
-.tm-play button{font:600 12px/1 -apple-system,system-ui,sans-serif;color:#fff;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);border-radius:8px;min-height:34px;padding:0 12px;cursor:pointer;white-space:nowrap}
+.tm-play{display:flex;flex-direction:column;gap:6px;align-items:flex-end}   /* the column is 118 px: side by side the two buttons overflow onto each other */
+.tm-play button{width:auto;font:600 12px/1 -apple-system,system-ui,sans-serif;color:#fff;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);border-radius:8px;min-height:34px;padding:0 12px;cursor:pointer;white-space:nowrap}
 .tm-play button:hover{background:rgba(255,255,255,.16)}
 .tm-play #tmReplay{background:#ff4d4d;border-color:#ff4d4d}.tm-play #tmReplay:hover{background:#ff6b6b}
 .tm-play #tmReplay.on{background:rgba(255,77,77,.2);color:#ff8a8a}
