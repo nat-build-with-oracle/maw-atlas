@@ -298,7 +298,12 @@ function travelTo(day) {
   if (firstTravel || reduced()) { firstTravel = false; tCut = to; tw = twTo; tAnim = null; applyK(); placeMarker(); return; }
   if (to === tCut && twTo === tw && !tAnim) return;
   const dist = Math.abs(to - tCut) / 86400, cont = !!tAnim;
-  tAnim = { from: tCut, to, twFrom: tw, twTo, t0: performance.now(), cont, dur: cont ? Math.min(2400, 900 + 80 * dist) : Math.min(6000, 2200 + 140 * dist) };
+  // forward (the map grows, lightning strikes) runs slow so it can be watched; back to the past runs fast
+  // (Nat 2026-11-27: "slow when forward and back to the past fast")
+  const fwd = to > tCut;
+  tAnim = { from: tCut, to, twFrom: tw, twTo, t0: performance.now(), cont,
+    dur: fwd ? (cont ? Math.min(2400, 900 + 80 * dist) : Math.min(6000, 2200 + 140 * dist))
+             : (cont ? Math.min(900, 350 + 25 * dist) : Math.min(1600, 700 + 35 * dist)) };
   bigShow();
 }
 function stepPaint(now) {
@@ -656,7 +661,8 @@ const endScrub = () => { scrub = false; track.classList.remove("drag"); };
 track.addEventListener("pointerup", endScrub); track.addEventListener("pointercancel", endScrub);
 track.addEventListener("pointerleave", () => { if (!scrub) { tmHover = tmMouse = null; drawTimeline(); } });
 const stepDay = (dir) => { const k = tDay === null ? DAYS.length : DAYS.indexOf(tDay), j = k + dir; if (j < 0) return; go({ t: j < DAYS.length ? dayLabel(DAYS[j]) : "", p: -1 }); };
-// ▲ / ▼: a click steps one day; hold the button and it keeps stepping (after 350 ms, a day every 420 ms) — a replay
+// ▲ / ▼: a click steps one day; hold the button and it keeps stepping (after 350 ms, a day every 420 ms forward,
+// 150 ms back) — a replay
 // of the map growing (▼) or shrinking (▲). The first step pushes history, the repeats replace it.
 const stepDayHold = (dir, replace) => { const k = tDay === null ? DAYS.length : DAYS.indexOf(tDay), j = k + dir;
   if (j < 0 || (dir > 0 && tDay === null)) return false; go({ t: j < DAYS.length ? dayLabel(DAYS[j]) : "", p: -1 }, replace); return j < DAYS.length; };
@@ -666,7 +672,7 @@ for (const [id, dir] of [["tmUp", -1], ["tmDown", 1]]) {
   b.addEventListener("pointerdown", (e) => {
     if (b.disabled) return; e.preventDefault(); b.setPointerCapture(e.pointerId); b.classList.add("held");
     stepDayHold(dir, false);
-    timer = setTimeout(() => { timer = setInterval(() => { if (!stepDayHold(dir, true)) stop(); }, 420); }, 350);
+    timer = setTimeout(() => { timer = setInterval(() => { if (!stepDayHold(dir, true)) stop(); }, dir > 0 ? 420 : 150); }, 350);
   });
   b.addEventListener("pointerup", stop); b.addEventListener("pointercancel", stop);
   b.addEventListener("click", (e) => { if (e.detail === 0) stepDayHold(dir, false); });   // keyboard Enter/Space on the button
