@@ -21,10 +21,10 @@ const N = 60, dir = mkdtempSync(join(tmpdir(), "atlas-brain-page-"));
 function writeBrain() {
   const xyz = new Float32Array(N * 3), sep = new Float32Array(N * 3), grp = new Uint32Array(N), knn = new Uint32Array(N * 2);
   for (let i = 0; i < N; i++) {
-    const g = Math.floor(i / 20), a = i * 0.105;   // consecutive points close on the ring, so inner links are short and shown
+    const g = Math.floor(i / 20), a = i * 0.05;   // consecutive points close on the ring, so inner links stay short (< MAXLEN after the page scales the map) and show
     grp[i] = g;
-    xyz.set([Math.cos(a) * 30 + g * 8, Math.sin(a) * 30, (i % 7) * 4 - 12], i * 3);           // rooms mixed together
-    sep.set([(g - 1) * 70 + Math.cos(a) * 12, Math.sin(a) * 12, (i % 5) * 2], i * 3);          // rooms apart
+    xyz.set([Math.cos(a) * 30 + g * 8, Math.sin(a) * 30, (i % 7) - 3], i * 3);           // rooms mixed together
+    sep.set([(g - 1) * 70 + Math.cos(i * 2.4) * 12, Math.sin(i * 2.4) * 12, (i % 5) * 2], i * 3);   // islands keep the old spread          // rooms apart
     knn.set([g * 20 + ((i + 1) % 20), (i + 20) % N], i * 2);                                   // one link inside, one across
   }
   writeFileSync(join(dir, "xyz.f32"), xyz); writeFileSync(join(dir, "sep.f32"), sep);
@@ -167,8 +167,15 @@ describe.skipIf(!CHROME || !online)("brain.html in headless Chrome", () => {
     expect(cdp.errors).toEqual([]);
   }, 60000);
 
+  test("the title link resets everything, Combined included", async () => {
+    await cdp.eval("document.getElementById('home').click()");
+    await cdp.until("location.search === '' && window.__brain.layout().name === 'all'");
+    expect(cdp.errors).toEqual([]);
+  }, 60000);
   test("lightning: chunks that come into existence strike their links to older chunks", async () => {
     // the 24 chunks of 2026-11-02 against the 17 of 2026-11-01: the sweep from the end of day 1 to the end of day 2
+    // after the title link: Combined, no search or story focus (focus turns lightning off)
+    expect(await cdp.eval("window.__brain.layout().name")).toBe("all");
     const day1 = Date.UTC(2026, 10, 1, 17) / 1000, day2 = day1 + 86400;
     const before = await cdp.eval<number>("window.__brain.bolts().struck");
     const after = await cdp.eval<number>(`window.__brain.spark(${day1}, ${day2})`);
@@ -178,9 +185,4 @@ describe.skipIf(!CHROME || !online)("brain.html in headless Chrome", () => {
     expect(cdp.errors).toEqual([]);
   }, 60000);
 
-  test("the title link resets everything, Combined included", async () => {
-    await cdp.eval("document.getElementById('home').click()");
-    await cdp.until("location.search === '' && window.__brain.layout().name === 'all'");
-    expect(cdp.errors).toEqual([]);
-  }, 60000);
 });
