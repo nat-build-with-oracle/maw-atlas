@@ -185,4 +185,15 @@ describe.skipIf(!CHROME || !online)("brain.html in headless Chrome", () => {
     expect(cdp.errors).toEqual([]);
   }, 60000);
 
+  test("replay: one button goes back to the first day, then plays forward to Now; Start jumps to the first day", async () => {
+    await cdp.eval("document.getElementById('tmStart').click()");
+    await cdp.until("window.__brain.tm().t === '2026-11-01' && window.__brain.tm().animating === false");
+    const struck0 = await cdp.eval<number>("window.__brain.bolts().struck");
+    await cdp.eval("document.getElementById('tmReplay').click()");
+    await cdp.until("window.__brain.replay() === 'play'");
+    await cdp.until("window.__brain.replay() === null && window.__brain.tm().t === ''", 30000);
+    expect(await cdp.eval("window.__brain.tm().shown")).toBe(N);
+    expect(await cdp.eval<number>("window.__brain.bolts().struck")).toBeGreaterThanOrEqual(struck0);
+    expect(cdp.errors).toEqual([]);
+  }, 60000);
 });

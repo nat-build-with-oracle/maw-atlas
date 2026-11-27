@@ -79,6 +79,11 @@ svg.i{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2;stroke
 .tm-track b.sel{color:#ff6b6b}.tm-track b.hov{color:var(--accent);font-size:12px;background:rgba(0,0,0,.75);padding:3px 6px;border-radius:5px;z-index:2}
 .tm-now{font:600 11px/1 -apple-system,system-ui,sans-serif;color:#ff4d4d;cursor:pointer;padding:2px 0}.tm-now.off{color:var(--dim)}
 .tm-cap{font-size:10.5px;color:var(--dim);text-align:right}
+.tm-play{display:flex;gap:6px;justify-content:flex-end}
+.tm-play button{font:600 12px/1 -apple-system,system-ui,sans-serif;color:#fff;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);border-radius:8px;min-height:34px;padding:0 12px;cursor:pointer;white-space:nowrap}
+.tm-play button:hover{background:rgba(255,255,255,.16)}
+.tm-play #tmReplay{background:#ff4d4d;border-color:#ff4d4d}.tm-play #tmReplay:hover{background:#ff6b6b}
+.tm-play #tmReplay.on{background:rgba(255,77,77,.2);color:#ff8a8a}
 .tm-big{position:fixed;left:50%;top:44%;transform:translate(-50%,-50%) scale(.97);text-align:center;pointer-events:none;opacity:0;transition:opacity .5s ease,transform .5s ease}
 .tm-big.on{opacity:1;transform:translate(-50%,-50%) scale(1)}
 .zap{position:fixed;inset:0;pointer-events:none;background:radial-gradient(ellipse at 50% 50%,rgba(190,220,255,.32),rgba(120,160,255,.08) 45%,rgba(0,0,0,0) 75%);opacity:0;z-index:5}
@@ -98,7 +103,7 @@ svg.i{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2;stroke
 </div>
 <div class="legend"><div class="modes"><button data-m="topic" id="topicBtn">topic</button><button data-m="room" class="on">room</button><button data-m="month">month</button><button data-m="source">source</button><button data-m="server" id="srvBtn">server</button></div><h4 id="legendTitle">Rooms</h4><div id="fams"></div></div>
 <aside class="panel" id="panel"></aside>
-<div class="tm" id="tm" title="Time Machine: click a day to see the map as it was that day"><div class="tm-cap">time machine</div><button id="tmUp" title="earlier day (hold to keep going back)">▲</button><div class="tm-track" id="tmTrack"><div id="tmTicks"></div><div class="tm-sel" id="tmSel"><span></span></div></div><button id="tmDown" title="later day (hold to replay forward)">▼</button><div class="tm-now" id="tmNow" title="back to now">Now</div></div>
+<div class="tm" id="tm" title="Time Machine: click a day to see the map as it was that day"><div class="tm-cap">time machine</div><div class="tm-play"><button id="tmStart" title="jump to the first day">⏮ start</button><button id="tmReplay" title="replay: back to the first day, then play forward to now (R)">▶ replay</button></div><button id="tmUp" title="earlier day (hold to keep going back)">▲</button><div class="tm-track" id="tmTrack"><div id="tmTicks"></div><div class="tm-sel" id="tmSel"><span></span></div></div><button id="tmDown" title="later day (hold to replay forward)">▼</button><div class="tm-now" id="tmNow" title="back to now">Now</div></div>
 <div class="tip" id="tip"></div>
 <div class="zap" id="zap"></div>
 <div class="tm-big" id="tmBig"><b id="tmBigDay"></b><small id="tmBigN"></small></div>
@@ -293,6 +298,7 @@ function paint() {
   if (!painted || reduced()) { kNow.set(kTo); applyK(); links.material.opacity = lo; painted = true; kAnim = null; return; }
   kFrom.set(kNow); kAnim = { t0: performance.now(), lf: links.material.opacity, lt: lo };
 }
+let replay = null;   // ⏮/▶ replay state (see the replay block): null | "back" | "play"
 function travelTo(day) {
   const to = day === null ? T_END : cutOf(day), twTo = day === null ? 0 : 1;
   if (firstTravel || reduced()) { firstTravel = false; tCut = to; tw = twTo; tAnim = null; applyK(); placeMarker(); return; }
@@ -306,7 +312,7 @@ function travelTo(day) {
   // (Nat 2026-11-27: "back to future ... fast to slow becoz node many dot many in the recently")
   const n0 = existedBy(tCut), n1 = existedBy(to), chunks = Math.abs(n1 - n0);
   tAnim = { from: tCut, to, twFrom: tw, twTo, t0: performance.now(), cont, fwd, n0, n1,
-    dur: fwd ? (cont ? Math.min(2400, 900 + 80 * dist) : Math.min(9000, Math.max(2200, 1800 + 4 * chunks)))
+    dur: fwd ? (cont ? Math.min(2400, 900 + 80 * dist) : Math.min(replay === "play" ? 14000 : 9000, Math.max(2200, 1800 + 4 * chunks)))
              : (cont ? Math.min(900, 350 + 25 * dist) : Math.min(1600, 700 + 35 * dist)) };
   bigShow();
 }
@@ -688,6 +694,32 @@ for (const [id, dir] of [["tmUp", -1], ["tmDown", 1]]) {
   b.addEventListener("click", (e) => { if (e.detail === 0) stepDayHold(dir, false); });   // keyboard Enter/Space on the button
 }
 $("tmNow").onclick = () => { if (S.t) go({ t: "", p: -1 }); };
+// ⏮ start / ▶ replay (Nat 2026-11-27: "a button to replay like start and end ... not let me click top and down, do
+// combo"): replay goes back to the first day (the fast way), then plays forward to Now in one sweep paced by chunks
+// (quiet days fly, busy days slow, lightning on every new link). Press it again to stop where it is.
+const firstDay = () => dayLabel(DAYS[0]);
+function setReplayBtn() { const b = $("tmReplay"); b.classList.toggle("on", !!replay); b.textContent = replay ? "■ stop" : "▶ replay"; }
+function stopReplay() { replay = null; setReplayBtn(); }
+$("tmStart").onclick = () => { stopReplay(); go({ t: firstDay(), p: -1 }); };
+function startReplay() {
+  if (replay) {   // stop: stay on the day the sweep has reached
+    stopReplay();
+    const d = Math.floor((tCut - 1 + 7 * 3600) / 86400), k = DAYS.findLastIndex((x) => x <= d);
+    go({ t: k >= 0 && k < DAYS.length - 1 ? dayLabel(DAYS[k]) : "", p: -1 }, true);
+    return;
+  }
+  replay = "back"; setReplayBtn();
+  if (S.t === firstDay() && !tAnim) { replay = "play"; go({ t: "", p: -1 }, true); return; }
+  go({ t: firstDay(), p: -1 });
+}
+$("tmReplay").onclick = startReplay;
+for (const id of ["tmUp", "tmDown", "tmTrack", "tmNow"]) $(id).addEventListener("pointerdown", () => { if (replay) stopReplay(); });
+addEventListener("keydown", (e) => { if ((e.key === "r" || e.key === "R") && !e.metaKey && !e.ctrlKey && !(e.target instanceof HTMLInputElement)) startReplay(); });
+function stepReplay() {   // called every frame: when the way back ends, play forward to Now; when that ends, done
+  if (!replay || tAnim) return;
+  if (replay === "back") { replay = "play"; go({ t: "", p: -1 }, true); }
+  else stopReplay();
+}
 // keys: ↑ earlier day, ↓ later day (↓ past the last day = Now), Esc = Now — not while typing in the search box
 addEventListener("keydown", (e) => {
   if (e.target.closest?.("input,textarea")) return;
@@ -757,8 +789,9 @@ window.__brain = { N, links: pairs.length / 2, longDropped, rooms: groups.length
   bolts: () => ({ live: bolts.length, struck: struckTotal }),
   // strike the links made between two cutoffs (unix s), as a forward sweep does frame by frame (for tests)
   spark: (c0, c1) => { sparkBetween(c0, c1, performance.now()); return struckTotal; },
+  replay: () => replay,
   tm: () => { let shown = 0; for (let i = 0; i < N; i++) if (inTime(i)) shown++; return { t: S.t, days: DAYS.length, first: dayLabel(DAYS[0]), last: dayLabel(DAYS[DAYS.length - 1]), shown, ticks: ticks.querySelectorAll("i").length, animating: !!kAnim || !!tAnim }; } };
-renderer.setAnimationLoop((now) => { stepGlide(now); stepPaint(now); stepBolts(now); controls.update(); placeIslands(); renderer.render(scene, camera); });
+renderer.setAnimationLoop((now) => { stepGlide(now); stepPaint(now); stepBolts(now); stepReplay(); controls.update(); placeIslands(); renderer.render(scene, camera); });
 </script>
 </body>
 </html>
