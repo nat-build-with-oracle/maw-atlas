@@ -81,6 +81,7 @@ svg.i{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2;stroke
 .tm-cap{font-size:10.5px;color:var(--dim);text-align:right}
 .tm-big{position:fixed;left:50%;top:44%;transform:translate(-50%,-50%) scale(.97);text-align:center;pointer-events:none;opacity:0;transition:opacity .5s ease,transform .5s ease}
 .tm-big.on{opacity:1;transform:translate(-50%,-50%) scale(1)}
+.zap{position:fixed;inset:0;pointer-events:none;background:radial-gradient(ellipse at 50% 50%,rgba(190,220,255,.32),rgba(120,160,255,.08) 45%,rgba(0,0,0,0) 75%);opacity:0;z-index:5}
 .tm-big b{display:block;font:200 68px/1.05 -apple-system,system-ui,sans-serif;letter-spacing:.03em;color:#fff;text-shadow:0 0 28px rgba(0,0,0,.95);font-variant-numeric:tabular-nums}
 .tm-big small{display:block;margin-top:8px;font-size:14px;color:#c9c6bc;text-shadow:0 0 10px #000;font-variant-numeric:tabular-nums}
 </style>
@@ -99,6 +100,7 @@ svg.i{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2;stroke
 <aside class="panel" id="panel"></aside>
 <div class="tm" id="tm" title="Time Machine: click a day to see the map as it was that day"><div class="tm-cap">time machine</div><button id="tmUp" title="earlier day (hold to keep going back)">▲</button><div class="tm-track" id="tmTrack"><div id="tmTicks"></div><div class="tm-sel" id="tmSel"><span></span></div></div><button id="tmDown" title="later day (hold to replay forward)">▼</button><div class="tm-now" id="tmNow" title="back to now">Now</div></div>
 <div class="tip" id="tip"></div>
+<div class="zap" id="zap"></div>
 <div class="tm-big" id="tmBig"><b id="tmBigDay"></b><small id="tmBigN"></small></div>
 <div id="isls"></div>
 <div class="status" id="status">loading…</div>
@@ -296,7 +298,12 @@ function travelTo(day) {
   if (firstTravel || reduced()) { firstTravel = false; tCut = to; tw = twTo; tAnim = null; applyK(); placeMarker(); return; }
   if (to === tCut && twTo === tw && !tAnim) return;
   const dist = Math.abs(to - tCut) / 86400, cont = !!tAnim;
-  tAnim = { from: tCut, to, twFrom: tw, twTo, t0: performance.now(), cont, dur: cont ? Math.min(1400, 500 + 40 * dist) : Math.min(2600, 1000 + 60 * dist) };
+  // forward (the map grows, lightning strikes) runs slow so it can be watched; back to the past runs fast
+  // (Nat 2026-11-27: "slow when forward and back to the past fast")
+  const fwd = to > tCut;
+  tAnim = { from: tCut, to, twFrom: tw, twTo, t0: performance.now(), cont,
+    dur: fwd ? (cont ? Math.min(2400, 900 + 80 * dist) : Math.min(6000, 2200 + 140 * dist))
+             : (cont ? Math.min(900, 350 + 25 * dist) : Math.min(1600, 700 + 35 * dist)) };
   bigShow();
 }
 function stepPaint(now) {
@@ -310,12 +317,96 @@ function stepPaint(now) {
   }
   if (tAnim) {
     const u = Math.min(1, (now - tAnim.t0) / tAnim.dur), e = tAnim.cont ? outExpo(u) : expo(u);
+    const prevCut = tCut;
     tCut = tAnim.from + (tAnim.to - tAnim.from) * e; tw = tAnim.twFrom + (tAnim.twTo - tAnim.twFrom) * e;
+    if (tCut > prevCut) sparkBetween(prevCut, tCut, now);
     const done = u >= 1; if (done) tAnim = null;
     bigUpdate(done); placeMarker();
     dirty = true;
   }
   if (dirty) applyK();
+}
+// ---- lightning: while time runs forward, every chunk that comes into existence and links to a chunk that already
+// existed strikes a bolt along that link (Nat 2026-11-27: "ให้มัน Spark แรงๆ เหมือนฟ้าผ่า ... ปังๆๆ"). A bolt is a jagged
+// line re-drawn every frame (it flickers), a white core and a blue halo, bright for ~0.5 s and fading; both ends flash.
+// Many strikes in one frame also flash the whole screen. Off with ?motion=0, like the rest of the motion.
+const ORDER = Uint32Array.from({ length: N }, (_, i) => i).sort((a, b) => t0[a] - t0[b]);
+let nbFor = null, nb = null;
+function neighbours() {
+  if (nbFor === pairs) return nb;
+  nb = Array.from({ length: N }, () => []);
+  for (let k = 0; k < pairs.length; k += 2) { nb[pairs[k]].push(pairs[k + 1]); nb[pairs[k + 1]].push(pairs[k]); }
+  nbFor = pairs; return nb;
+}
+const BOLTS = 320, SEG = 7, PER_FRAME = 24, BOLT_MS = 1100;
+const boltPos = new Float32Array(BOLTS * 2 * SEG * 2 * 3), boltCol = new Float32Array(BOLTS * 2 * SEG * 2 * 3);
+const boltGeo = new THREE.BufferGeometry();
+boltGeo.setAttribute("position", new THREE.BufferAttribute(boltPos, 3));
+boltGeo.setAttribute("color", new THREE.BufferAttribute(boltCol, 3));
+const boltLines = new THREE.LineSegments(boltGeo, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false, depthTest: false, blending: THREE.AdditiveBlending }));
+boltLines.frustumCulled = false; scene.add(boltLines);
+const flashPos = new Float32Array(BOLTS * 2 * 3), flashCol = new Float32Array(BOLTS * 2 * 3);
+const flashGeo = new THREE.BufferGeometry();
+flashGeo.setAttribute("position", new THREE.BufferAttribute(flashPos, 3));
+flashGeo.setAttribute("color", new THREE.BufferAttribute(flashCol, 3));
+const flashes = new THREE.Points(flashGeo, new THREE.PointsMaterial({ size: N > 5000 ? 7 : 10, map: sprite, vertexColors: true, transparent: true, depthWrite: false, depthTest: false, blending: THREE.AdditiveBlending, sizeAttenuation: true }));
+flashes.frustumCulled = false; scene.add(flashes);
+const bolts = [];   // {a, b, t0, seed}
+let zapUntil = 0, struckTotal = 0;
+function sparkBetween(c0, c1, now) {
+  if (reduced() || focus) return;
+  const lo = existedBy(c0), hi = existedBy(c1);
+  if (hi <= lo) return;
+  const NB = neighbours(), fresh = [];
+  for (let r = lo; r < hi; r++) {
+    const i = ORDER[r]; if (on.get(keyOf(i)) === false) continue;
+    for (const j of NB[i]) if (t0[j] < t0[i] && on.get(keyOf(j)) !== false) fresh.push([i, j]);
+  }
+  if (!fresh.length) return;
+  const struck = Math.min(PER_FRAME, fresh.length); struckTotal += struck;
+  // a long sweep can make thousands of new links in one frame: strike a random sample, never more than PER_FRAME
+  for (let n = 0; n < Math.min(PER_FRAME, fresh.length); n++) {
+    const [a, b] = fresh.splice(Math.floor(Math.random() * fresh.length), 1)[0];
+    if (bolts.length >= BOLTS) bolts.shift();
+    bolts.push({ a, b, t0: now, seed: Math.random() * 1000 });
+  }
+  if (struck >= 6 && now > zapUntil) {   // a burst: the screen flashes
+    const z = $("zap"); z.style.transition = "none"; z.style.opacity = "1";
+    requestAnimationFrame(() => { z.style.transition = "opacity .7s ease-out"; z.style.opacity = "0"; });
+    zapUntil = now + 260;
+  }
+}
+function stepBolts(now) {
+  let lv = 0, fv = 0;
+  for (let k = bolts.length - 1; k >= 0; k--) if (now - bolts[k].t0 > BOLT_MS) bolts.splice(k, 1);
+  for (const B of bolts) {
+    const u = (now - B.t0) / BOLT_MS, flick = 0.55 + 0.45 * Math.random();
+    const I = Math.pow(1 - u, 1.6) * flick * (u < 0.08 ? 1.6 : 1);   // a hard first hit, then it dies away
+    const ax = xyz[B.a * 3], ay = xyz[B.a * 3 + 1], az = xyz[B.a * 3 + 2];
+    const bx = xyz[B.b * 3], by = xyz[B.b * 3 + 1], bz = xyz[B.b * 3 + 2];
+    const dx = bx - ax, dy = by - ay, dz = bz - az, len = Math.hypot(dx, dy, dz) || 1;
+    // two perpendicular directions for the zig-zag
+    let px = -dy, py = dx, pz = 0; const pl = Math.hypot(px, py) || 1; px /= pl; py /= pl;
+    const qx = (dy * pz - dz * py) / len, qy = (dz * px - dx * pz) / len, qz = (dx * py - dy * px) / len;
+    for (const [amp, r, g, bl] of [[0.10, 1.0, 1.0, 1.0], [0.22, 0.35, 0.6, 1.0]]) {   // core, halo
+      let x0 = ax, y0 = ay, z0 = az;
+      for (let s_ = 1; s_ <= SEG; s_++) {
+        const f = s_ / SEG, j = s_ === SEG ? 0 : (Math.random() - 0.5) * 2 * amp * len, j2 = s_ === SEG ? 0 : (Math.random() - 0.5) * 2 * amp * len;
+        const x1 = ax + dx * f + px * j + qx * j2, y1 = ay + dy * f + py * j + qy * j2, z1 = az + dz * f + pz * j + qz * j2;
+        const o = lv * 6;
+        boltPos[o] = x0; boltPos[o + 1] = y0; boltPos[o + 2] = z0; boltPos[o + 3] = x1; boltPos[o + 4] = y1; boltPos[o + 5] = z1;
+        for (let c = 0; c < 2; c++) { boltCol[o + c * 3] = r * I; boltCol[o + c * 3 + 1] = g * I; boltCol[o + c * 3 + 2] = bl * I; }
+        lv++; x0 = x1; y0 = y1; z0 = z1;
+      }
+    }
+    for (const [x, y, z] of [[ax, ay, az], [bx, by, bz]]) {
+      const o = fv * 3; flashPos[o] = x; flashPos[o + 1] = y; flashPos[o + 2] = z;
+      flashCol[o] = 0.7 * I; flashCol[o + 1] = 0.85 * I; flashCol[o + 2] = 1.0 * I; fv++;
+    }
+  }
+  boltGeo.setDrawRange(0, lv * 2); flashGeo.setDrawRange(0, fv);
+  if (lv) { boltGeo.attributes.position.needsUpdate = true; boltGeo.attributes.color.needsUpdate = true; }
+  if (fv) { flashGeo.attributes.position.needsUpdate = true; flashGeo.attributes.color.needsUpdate = true; }
 }
 // the big date in the middle of the screen while the cutoff moves: which day, how many chunks existed by then
 let bigTimer = null;
@@ -570,7 +661,8 @@ const endScrub = () => { scrub = false; track.classList.remove("drag"); };
 track.addEventListener("pointerup", endScrub); track.addEventListener("pointercancel", endScrub);
 track.addEventListener("pointerleave", () => { if (!scrub) { tmHover = tmMouse = null; drawTimeline(); } });
 const stepDay = (dir) => { const k = tDay === null ? DAYS.length : DAYS.indexOf(tDay), j = k + dir; if (j < 0) return; go({ t: j < DAYS.length ? dayLabel(DAYS[j]) : "", p: -1 }); };
-// ▲ / ▼: a click steps one day; hold the button and it keeps stepping (after 350 ms, a day every 160 ms) — a replay
+// ▲ / ▼: a click steps one day; hold the button and it keeps stepping (after 350 ms, a day every 420 ms forward,
+// 150 ms back) — a replay
 // of the map growing (▼) or shrinking (▲). The first step pushes history, the repeats replace it.
 const stepDayHold = (dir, replace) => { const k = tDay === null ? DAYS.length : DAYS.indexOf(tDay), j = k + dir;
   if (j < 0 || (dir > 0 && tDay === null)) return false; go({ t: j < DAYS.length ? dayLabel(DAYS[j]) : "", p: -1 }, replace); return j < DAYS.length; };
@@ -580,7 +672,7 @@ for (const [id, dir] of [["tmUp", -1], ["tmDown", 1]]) {
   b.addEventListener("pointerdown", (e) => {
     if (b.disabled) return; e.preventDefault(); b.setPointerCapture(e.pointerId); b.classList.add("held");
     stepDayHold(dir, false);
-    timer = setTimeout(() => { timer = setInterval(() => { if (!stepDayHold(dir, true)) stop(); }, 160); }, 350);
+    timer = setTimeout(() => { timer = setInterval(() => { if (!stepDayHold(dir, true)) stop(); }, dir > 0 ? 420 : 150); }, 350);
   });
   b.addEventListener("pointerup", stop); b.addEventListener("pointercancel", stop);
   b.addEventListener("click", (e) => { if (e.detail === 0) stepDayHold(dir, false); });   // keyboard Enter/Space on the button
@@ -652,8 +744,11 @@ await render(S);
 window.__brain = { N, links: pairs.length / 2, longDropped, rooms: groups.length, servers: servers.length, state: () => S, project: (i) => { const v = new THREE.Vector3(xyz[i * 3], xyz[i * 3 + 1], xyz[i * 3 + 2]).project(camera); return [(v.x + 1) / 2 * innerWidth, (1 - v.y) / 2 * innerHeight]; }, hover: () => hover, story: () => storyLine ? storyLine.geometry.attributes.position.count : 0,
   layout: () => ({ name: layout, gliding: !!glide, layouts: Object.keys(LAYOUTS), links: pairs.length / 2, labels: islEls.filter((o) => o.el.style.display === "block").length }),
   at: (i) => [xyz[i * 3], xyz[i * 3 + 1], xyz[i * 3 + 2]],
+  bolts: () => ({ live: bolts.length, struck: struckTotal }),
+  // strike the links made between two cutoffs (unix s), as a forward sweep does frame by frame (for tests)
+  spark: (c0, c1) => { sparkBetween(c0, c1, performance.now()); return struckTotal; },
   tm: () => { let shown = 0; for (let i = 0; i < N; i++) if (inTime(i)) shown++; return { t: S.t, days: DAYS.length, first: dayLabel(DAYS[0]), last: dayLabel(DAYS[DAYS.length - 1]), shown, ticks: ticks.querySelectorAll("i").length, animating: !!kAnim || !!tAnim }; } };
-renderer.setAnimationLoop((now) => { stepGlide(now); stepPaint(now); controls.update(); placeIslands(); renderer.render(scene, camera); });
+renderer.setAnimationLoop((now) => { stepGlide(now); stepPaint(now); stepBolts(now); controls.update(); placeIslands(); renderer.render(scene, camera); });
 </script>
 </body>
 </html>
